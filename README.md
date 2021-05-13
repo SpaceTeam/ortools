@@ -7,10 +7,10 @@ Tools and scripts for [OpenRocket](https://openrocket.info/) using Python and
 ## Installation
 
 1. Download or clone the project.
-2. Create and activate some conda or pip environment. E.g.:
+2. Create and activate some conda or pip environment with Python 3. E.g.:
 
    ```shell
-   conda create -n ortools
+   conda create -n ortools python=3
    conda activate ortools
    ```
 
