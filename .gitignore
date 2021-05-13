@@ -17,3 +17,6 @@ doc/build/
 *.pdf
 
 *.ini
+*.ork
+!examples/*.ini
+!examples/*.ork
