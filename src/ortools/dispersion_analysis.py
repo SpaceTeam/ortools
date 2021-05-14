@@ -26,8 +26,8 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 @click.option("--output", "-o", type=click.Path(exists=False),
               help="Name of the file the output is saved to.")
 @click.option("--show", "-s", is_flag=True, default=False,
-              help="Show the output on screen.")
-def cli(directory, filename, config, output, show):
+              help="Show the results on screen.")
+def diana(directory, filename, config, output, show):
     """Do a dispersion analysis of an OpenRocket simulation.
 
     A dispersion analysis runs multiple simulations with slightly
@@ -42,31 +42,70 @@ def cli(directory, filename, config, output, show):
     ork_file_path = filename or utility.find_latest_file(".ork", directory)
     config_file_path = config or utility.find_latest_file(".ini", directory)
     output_filename = output or "dispersion_analysis.pdf"
-    output_is_shown = show
+    results_are_shown = show
     print("directory      : {}".format(directory))
     print(".ork file      : {}".format(ork_file_path))
     print("config file    : {}".format(config_file_path))
     print("output file    : {}".format(output_filename))
-    print("output is shown: {}".format(output_is_shown))
+    print("output is shown: {}".format(results_are_shown))
     config = configparser.ConfigParser()
     config.read(config_file_path)
     print("config sections: {}".format(config.sections()))
     print("")
 
-    # Add landing point class, and run simulations
-    dispersion_analysis = DispersionAnalysis()
+    # This is what I imagined
+    with orhelper.OpenRocketInstance() as instance:
+        orh = orhelper.Helper(instance)
+        sim = orh.load_doc(ork_file_path).getSimulation(0)
 
-    n_simulations = int(config["General"]["NumberOfSimulations"])
-    print("Start {} simulation(s).".format(n_simulations))
-    dispersion_analysis.set_ork_file_path(ork_file_path)
-    dispersion_analysis.set_launch_rail_deviation(
-        float(config["LaunchRail"]["Azimuth"]),
-        float(config["LaunchRail"]["Elevation"]))
-    dispersion_analysis.run_simulations(n_simulations)
+        set_simulation_parameters(sim, config)
 
-    # Statistics
-    if output_is_shown:
-        dispersion_analysis.print_stats()
+        # Depending on the kind of results there might be a better name
+        # for this
+        results = []
+        n_simulations = config["General"]["NumberOfSimulations"]
+        for i in range(n_simulations):
+            print("Running simulation {:4} of {}".format(i, n_simulations))
+            randomize_simulation_parameters(sim, config)
+            results.append(run_simulation(orh, sim))
+
+    # Plot stuff, show and store it
+    create_plots(results, output_filename, results_are_shown)
+
+
+def set_simulation_parameters(sim, config):
+    """Setup the simulation parameters according to the given config."""
+    raise NotImplementedError
+
+
+def randomize_simulation_parameters(sim, config):
+    """Draw random samples for the simulation parameters."""
+    raise NotImplementedError
+
+
+def run_simulation(orh, sim):
+    """Run a single simulation and return the results."""
+    raise NotImplementedError
+
+
+def create_plots(results, output_filename, results_are_shown=False):
+    """Create, store and optionally show the plots of the results."""
+    raise NotImplementedError
+
+    # # Add landing point class, and run simulations
+    # dispersion_analysis = DispersionAnalysis()
+
+    # n_simulations = int(config["General"]["NumberOfSimulations"])
+    # print("Start {} simulation(s).".format(n_simulations))
+    # dispersion_analysis.set_ork_file_path(ork_file_path)
+    # dispersion_analysis.set_launch_rail_deviation(
+    #     float(config["LaunchRail"]["Azimuth"]),
+    #     float(config["LaunchRail"]["Elevation"]))
+    # dispersion_analysis.run_simulations(n_simulations)
+
+    # # Statistics
+    # if results_are_shown:
+    #     dispersion_analysis.print_stats()
 
 
 class DispersionAnalysis():
@@ -80,7 +119,7 @@ class DispersionAnalysis():
         self._ork_file_path = None
         self._dev_azimuth = None
         self._dev_elevation = None
-    
+
     def set_ork_file_path(self, ork_file_path):
         self._ork_file_path = ork_file_path
 
@@ -182,4 +221,4 @@ class WindListener(orhelper.AbstractSimulationListener):
 
 
 if __name__ == "__main__":
-    cli()
+    diana()
