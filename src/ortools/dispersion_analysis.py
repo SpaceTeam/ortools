@@ -53,145 +53,111 @@ def diana(directory, filename, config, output, show):
     print("config sections: {}".format(config.sections()))
     print("")
 
-    # This is what I imagined
     with orhelper.OpenRocketInstance() as instance:
         orh = orhelper.Helper(instance)
         sim = orh.load_doc(ork_file_path).getSimulation(0)
 
-        set_simulation_parameters(sim, config)
+        elevation, azimuth = get_simulation_parameters(sim, config)
 
-        # Depending on the kind of results there might be a better name
-        # for this
-        results = []
-        n_simulations = config["General"]["NumberOfSimulations"]
+        _landing_points = []
+        _launch_points = []
+        n_simulations = int(config["General"]["NumberOfSimulations"])
+        
         for i in range(n_simulations):
-            print("Running simulation {:4} of {}".format(i, n_simulations))
-            randomize_simulation_parameters(sim, config)
-            results.append(run_simulation(orh, sim))
+            print("Running simulation {:4} of {}".format(i+1, n_simulations))
+            randomize_simulation_parameters(sim, config, elevation, azimuth)
+            run_simulation(orh, sim, _launch_points, _landing_points)
+            #print(_landing_points)
+
+        print_stats(_launch_points, _landing_points)
 
     # Plot stuff, show and store it
-    create_plots(results, output_filename, results_are_shown)
+    #create_plots(results, output_filename, results_are_shown)
 
 
-def set_simulation_parameters(sim, config):
+def get_simulation_parameters(sim, config):
     """Setup the simulation parameters according to the given config."""
-    raise NotImplementedError
+    options = sim.getOptions()
+    elevation = math.degrees(options.getLaunchRodAngle())
+    azimuth = math.degrees(options.getLaunchRodDirection())
+    print("Initial launch rail elevation = {:6.2f}°".format(elevation))
+    print("Initial launch rail azimuth   = {:6.2f}°".format(azimuth))
+    return elevation, azimuth
 
-
-def randomize_simulation_parameters(sim, config):
+def randomize_simulation_parameters(sim, config, elevation, azimuth):
     """Draw random samples for the simulation parameters."""
-    raise NotImplementedError
+    
+    dev_azimuth = float(config["LaunchRail"]["Azimuth"])
+    dev_elevation = float(config["LaunchRail"]["Elevation"])
+    #print("Standard deviation(elevation) = {:6.2f}°".format(dev_elevation))
+    #print("Standard deviation(azimuth)   = {:6.2f}°".format(dev_azimuth))
+    
+    _rng = np.random.default_rng()
+    options = sim.getOptions()
+    options.setLaunchRodAngle(math.radians(
+        _rng.normal(elevation, dev_elevation)))
+    options.setLaunchIntoWind(False) # otherwise launch rod direction cannot be altered
+    options.setLaunchRodDirection(math.radians(
+        _rng.normal(azimuth, dev_azimuth)))
 
+    elevation = math.degrees(options.getLaunchRodAngle())
+    azimuth = math.degrees(options.getLaunchRodDirection())
+    print("Used launch rail elevation = {:6.2f}°".format(elevation))
+    print("Used launch rail azimuth   = {:6.2f}°".format(azimuth))
 
-def run_simulation(orh, sim):
+def run_simulation(orh, sim, _launch_points, _landing_points):
     """Run a single simulation and return the results."""
-    raise NotImplementedError
-
-
+    wind_listener = WindListener()
+    landing_point_listener = LandingPointListener(_launch_points, _landing_points)
+    orh.run_simulation(sim, listeners=(wind_listener, landing_point_listener))
+    
 def create_plots(results, output_filename, results_are_shown=False):
     """Create, store and optionally show the plots of the results."""
     raise NotImplementedError
-
-    # # Add landing point class, and run simulations
-    # dispersion_analysis = DispersionAnalysis()
-
-    # n_simulations = int(config["General"]["NumberOfSimulations"])
-    # print("Start {} simulation(s).".format(n_simulations))
-    # dispersion_analysis.set_ork_file_path(ork_file_path)
-    # dispersion_analysis.set_launch_rail_deviation(
-    #     float(config["LaunchRail"]["Azimuth"]),
-    #     float(config["LaunchRail"]["Elevation"]))
-    # dispersion_analysis.run_simulations(n_simulations)
-
-    # # Statistics
-    # if results_are_shown:
-    #     dispersion_analysis.print_stats()
-
-
-class DispersionAnalysis():
-    """A class running many simulations to do a dispersion analysis."""
-
-    def __init__(self):
-        self._distances = []
-        self._bearings = []
-        self._landing_points = []
-        self._rng = np.random.default_rng()
-        self._ork_file_path = None
-        self._dev_azimuth = None
-        self._dev_elevation = None
-
-    def set_ork_file_path(self, ork_file_path):
-        self._ork_file_path = ork_file_path
-
-    def set_launch_rail_deviation(self, dev_azimuth, dev_elevation):
-        self._dev_azimuth = dev_azimuth
-        self._dev_elevation = dev_elevation
-        print("Standard deviation(elevation) = {:6.2f}°".format(dev_elevation))
-        print("Standard deviation(azimuth)   = {:6.2f}°".format(dev_azimuth))
-
-    def run_simulations(self, n_simulations):
-        with orhelper.OpenRocketInstance() as instance:
-
-            # Load the document and get simulation
-            orh = orhelper.Helper(instance)
-            doc = orh.load_doc(self._ork_file_path)
-            sim = doc.getSimulation(0)
-            print("Loaded Simulation: '{}'".format(sim.getName()))
-
-            options = sim.getOptions()
-            rocket = options.getRocket()
-
-            elevation = math.degrees(options.getLaunchRodAngle())
-            azimuth = math.degrees(options.getLaunchRodDirection())
-            print("Initial launch rail elevation = {:6.2f}°".format(elevation))
-            print("Initial launch rail azimuth   = {:6.2f}°".format(azimuth))
-
-            # Run simulations and append landing points
-            for p in range(n_simulations):
-                print("Running simulation {} of {}".format(p + 1,
-                                                           n_simulations))
-
-                options.setLaunchRodAngle(math.radians(
-                    self._rng.normal(elevation, self._dev_elevation)))
-                options.setLaunchRodDirection(math.radians(
-                    self._rng.normal(azimuth, self._dev_azimuth)))
-
-                wind_listener = WindListener()
-                landing_point_listener = LandingPointListener(self._distances,
-                                                              self._bearings)
-                orh.run_simulation(
-                    sim, listeners=(wind_listener, landing_point_listener))
-                self._landing_points.append(landing_point_listener)
-
-    def print_stats(self):
-        print(
-            "Rocket landing zone {:.1f}m ± {:.1f}m ".format(
-                np.mean(self._distances), np.std(self._distances))
-            + "bearing {:3.2f}° ± {:3.4f}° ".format(
-                np.degrees(np.mean(self._bearings)),
-                np.degrees(np.std(self._bearings)))
-            + "from launch site. Based on {} simulations.".format(
-                len(self._landing_points)))
-
+    
+def print_stats(launch_points, landing_points):
+    #print(launch_points)
+    #print(landing_points)
+    _distances = []
+    _bearings = []
+        
+    launch_point = launch_points[0] # launch point is the same for every simulation
+    for landing_point in landing_points:
+        print(launch_point)
+        print(landing_point)
+        _distance, _bearing = compute_distance_and_bearing(launch_point, landing_point)
+        _distances.append(_distance)
+        _bearings.append(_bearing)
+        
+    print(
+        "Rocket landing zone {:.1f}m ± {:.1f}m ".format(
+            np.mean(_distances), np.std(_distances))
+        + "bearing {:3.2f}° ± {:3.4f}° ".format(
+            np.degrees(np.mean(_bearings)),
+            np.degrees(np.std(_bearings)))
+        + "from launch site. Based on {} simulations.".format(
+            len(landing_points)))
 
 class LandingPointListener(orhelper.AbstractSimulationListener):
-    def __init__(self, distances, bearings):
-        self.distances = distances
-        self.bearings = bearings
+    def __init__(self, launch_point, landing_point):
+        self.launch_points = launch_point
+        self.landing_points = landing_point
 
     def endSimulation(self, status, simulation_exception):
         landing_position = status.getRocketWorldPosition()
+        
         conditions = status.getSimulationConditions()
-        launch_position = conditions.getLaunchSite()
+        launchpos = conditions.getLaunchSite()
+
         geodetic_computation = conditions.getGeodeticComputation()
 
         if geodetic_computation != geodetic_computation.FLAT:
             raise ValueError("GeodeticComputationStrategy type not supported!")
 
-        distance, bearing = compute_distance_and_bearing(launch_position,
-                                                         landing_position)
-        self.distances.append(distance)
-        self.bearings.append(bearing)
+        self.launch_points.append(launchpos)
+        #print(launchpos)
+        self.landing_points.append(landing_position)
+        #print(landing_position)
 
 
 def compute_distance_and_bearing(start, end):
