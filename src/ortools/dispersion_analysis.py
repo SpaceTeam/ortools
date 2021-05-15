@@ -6,7 +6,7 @@ import matplotlib as mpl
 from matplotlib import pyplot as plt
 import click
 import configparser
-
+from scipy.interpolate import interp1d
 import math
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
@@ -176,13 +176,36 @@ METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050
 
 class WindListener(orhelper.AbstractSimulationListener):
     # Set the wind speed as a function of altitude
+    
     def postWindModel(self, status, wind):
+
+        # list of aloft data
+        # see https://en.wikipedia.org/wiki/Winds_aloft
+        # TODO: input from external file
+        _wind_altitude_m = [0,914,1829,2743,3658,5486,7315,9144,10363,11887,13716,16154]
+        _wind_direction_degree = [10, 0,0,310,330,340,260,250,240,250,260,260]
+        _wind_speed_ms = [10,0,0,3,3,3,9,15,15,15,14,10]
+        if len(_wind_altitude_m) != len(_wind_direction_degree) or len(_wind_altitude_m) != len(_wind_speed_ms):
+            raise ValueError("Aloft data incorrect!")
+
+        # interpolate at current altitude
         # print(wind)
-        #position = status.getRocketPosition()
+        position = status.getRocketPosition()
         #print("Altitude ", position.z)
-        wind = wind.setX(1)
-        wind = wind.setY(1)
-        # print(wind)
+        # TODO: which fill_values shall be used above the aloft data? zero? last value? extrapolate?
+        f_wind_speed_ms = interp1d(_wind_altitude_m, _wind_speed_ms, bounds_error = False,
+                                   fill_value=(_wind_speed_ms[0], _wind_speed_ms[-1]))
+        wind_speed_ms = f_wind_speed_ms(position.z)
+        f_wind_direction_degree = interp1d(_wind_altitude_m, _wind_direction_degree, bounds_error = False,
+                                           fill_value=(_wind_direction_degree[0], _wind_direction_degree[-1]))
+        _wind_direction_degree = f_wind_direction_degree(position.z)
+        # give the wind in NE coordinates
+        # (where it is going, not where it is coming from)
+        v_east = -math.sin(math.radians(_wind_direction_degree))*wind_speed_ms;
+        v_north = -math.cos(math.radians(_wind_direction_degree))*wind_speed_ms;
+        wind = wind.setX(v_east)
+        wind = wind.setY(v_north)
+        #print(wind)
         return wind
 
 
