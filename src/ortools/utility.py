@@ -1,4 +1,5 @@
 import os
+import math
 
 
 def find_latest_file(extension, directory="."):
@@ -22,3 +23,9 @@ def find_latest_file(extension, directory="."):
         raise FileNotFoundError("No file with extension {} ".format(extension)
                                 + "was found in {}.".format(directory))
     return max(files, key=os.path.getmtime)
+
+
+def polar_to_cartesian(r, phi, phi_is_in_degree=True):
+    if phi_is_in_degree:
+        phi = math.radians(phi)
+    return r * math.cos(phi), r * math.sin(phi)

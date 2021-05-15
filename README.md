@@ -28,7 +28,7 @@ Tools and scripts for [OpenRocket](https://openrocket.info/) using Python and
    (except for orhelper which is only available via pip).
 
    ```shell
-   conda install numpy matplotlib click configparser
+   conda install numpy matplotlib click configparser scipy
    pip install orhelper
    ```
 
