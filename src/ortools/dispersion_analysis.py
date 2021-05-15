@@ -9,6 +9,8 @@ import configparser
 import scipy.interpolate
 
 import math
+import collections
+import dataclasses
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -58,47 +60,53 @@ def diana(directory, filename, config, output, show):
         orh = orhelper.Helper(instance)
         sim = orh.load_doc(ork_file_path).getSimulation(0)
 
-        elevation, azimuth = get_simulation_parameters(sim, config)
+        rng = np.random.default_rng()
+        random_parameters = set_up_random_parameters(sim, config, rng)
 
         landing_points = []
-        launch_points = []
         n_simulations = int(config["General"]["NumberOfSimulations"])
 
         for i in range(n_simulations):
             print("Running simulation {:4} of {}".format(i + 1, n_simulations))
-            randomize_simulation_parameters(sim, config, elevation, azimuth)
-            run_simulation(orh, sim, launch_points, landing_points)
-            # print(_landing_points)
+            randomize_simulation(sim, random_parameters)
+            landing_point, launch_point = run_simulation(orh, sim)
+            landing_points.append(landing_point)
 
-        print_stats(launch_points, landing_points)
+    print_stats(launch_point, landing_points)
 
 
-def get_simulation_parameters(sim, config):
-    """Return launch rail elevation and azimuth angle."""
+def set_up_random_parameters(sim, config, rng):
+    """Return a ``namedtuple`` containing all random parameters.
+
+    The random parameters are actually lambdas that return a new random
+    sample when called.
+    """
     options = sim.getOptions()
-    elevation = math.degrees(options.getLaunchRodAngle())
-    azimuth = math.degrees(options.getLaunchRodDirection())
-    print("Initial launch rail elevation = {:6.2f}°".format(elevation))
-    print("Initial launch rail azimuth   = {:6.2f}°".format(azimuth))
-    return elevation, azimuth
+    azimuth_mean = options.getLaunchRodDirection()
+    azimuth_stddev = math.radians(float(config["LaunchRail"]["Elevation"]))
+    elevation_mean = options.getLaunchRodAngle()
+    elevation_stddev = math.radians(float(config["LaunchRail"]["Elevation"]))
+
+    print("Initial launch rail azimuth   = {:6.2f}°".format(
+        math.degrees(azimuth_mean)))
+    print("Initial launch rail elevation = {:6.2f}°".format(
+        math.degrees(elevation_mean)))
+
+    RandomParameters = collections.namedtuple("RandomParameters", [
+        "elevation",
+        "azimuth"])
+    return RandomParameters(
+        elevation=lambda: rng.normal(elevation_mean, elevation_stddev),
+        azimuth=lambda: rng.normal(elevation_mean, elevation_stddev))
 
 
-def randomize_simulation_parameters(sim, config, elevation, azimuth):
-    """Draw random samples for the simulation parameters."""
-
-    azimuth_dev = float(config["LaunchRail"]["Azimuth"])
-    elevation_dev = float(config["LaunchRail"]["Elevation"])
-    #print("Standard deviation(elevation) = {:6.2f}°".format(elevation_dev))
-    #print("Standard deviation(azimuth)   = {:6.2f}°".format(azimuth_dev))
-
-    rng = np.random.default_rng()
+def randomize_simulation(sim, random_parameters):
+    """Set simulation parameters to random samples."""
     options = sim.getOptions()
-    options.setLaunchRodAngle(
-        math.radians(rng.normal(elevation, elevation_dev)))
+    options.setLaunchRodAngle(random_parameters.elevation())
     # otherwise launch rod direction cannot be altered
     options.setLaunchIntoWind(False)
-    options.setLaunchRodDirection(
-        math.radians(rng.normal(azimuth, azimuth_dev)))
+    options.setLaunchRodDirection(random_parameters.azimuth())
 
     elevation = math.degrees(options.getLaunchRodAngle())
     azimuth = math.degrees(options.getLaunchRodDirection())
@@ -106,12 +114,76 @@ def randomize_simulation_parameters(sim, config, elevation, azimuth):
     print("Used launch rail azimuth   = {:6.2f}°".format(azimuth))
 
 
-def run_simulation(orh, sim, launch_points, landing_points):
-    """Run a single simulation and return the results."""
+def run_simulation(orh, sim):
+    """Run a single simulation and return the results.
+
+    :return:
+        A 2-tuple containing the landing and launch position
+    """
     wind_listener = WindListener()
-    landing_point_listener = LandingPointListener(
-        launch_points, landing_points)
-    orh.run_simulation(sim, listeners=(wind_listener, landing_point_listener))
+    landing_point_listener = LandingPointListener()
+    orh.run_simulation(sim, listeners=(landing_point_listener, wind_listener))
+    return (landing_point_listener.landing_points[0],
+            landing_point_listener.launch_points[0])
+
+
+class LandingPointListener(orhelper.AbstractSimulationListener):
+    def __init__(self):
+        # FIXME: This is a weird workaround because I don't know how to
+        # create the member variables of the correct type.
+        self.landing_points = []
+        self.launch_points = []
+
+    def endSimulation(self, status, simulation_exception):
+        self.landing_points.append(status.getRocketWorldPosition())
+        conditions = status.getSimulationConditions()
+        self.launch_points.append(conditions.getLaunchSite())
+        geodetic_computation = conditions.getGeodeticComputation()
+
+        if geodetic_computation != geodetic_computation.FLAT:
+            raise ValueError("GeodeticComputationStrategy type not supported!")
+
+
+class WindListener(orhelper.AbstractSimulationListener):
+    """Set the wind speed as a function of altitude."""
+
+    def __init__(self):
+        # list of aloft data
+        # see https://en.wikipedia.org/wiki/Winds_aloft
+        # TODO: input from external file
+        altitudes_m = [0, 914, 1829, 2743, 3658, 5486, 7315, 9144, 10363,
+                       11887, 13716, 16154]
+        wind_directions_degree = [
+            10, 0, 0, 310, 330, 340, 260, 250, 240, 250, 260, 260]
+        wind_directions_rad = np.radians(wind_directions_degree)
+        wind_speeds_mps = [10, 0, 0, 3, 3, 3, 9, 15, 15, 15, 14, 10]
+        if (len(altitudes_m) != len(wind_directions_degree)
+                or len(altitudes_m) != len(wind_speeds_mps)):
+            raise ValueError(
+                "Aloft data is incorrect! `altitudes_m`, "
+                + "`wind_directions_degree` and `wind_speeds_mps` must be of "
+                + "the same length.")
+
+        # TODO: which fill_values shall be used above the aloft data? zero?
+        # last value? extrapolate?
+        self.interpolate_wind_speed_mps = scipy.interpolate.interp1d(
+            altitudes_m, wind_speeds_mps, bounds_error=False,
+            fill_value=(wind_speeds_mps[0], wind_speeds_mps[-1]))
+        self.interpolate_wind_direction_rad = scipy.interpolate.interp1d(
+            altitudes_m, wind_directions_rad, bounds_error=False,
+            fill_value=(wind_directions_rad[0], wind_directions_rad[-1]))
+
+    def postWindModel(self, status, wind):
+        position = status.getRocketPosition()
+        wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
+        wind_direction_rad = self.interpolate_wind_direction_rad(position.z)
+        # give the wind in NE coordinates (where it is going to, not where
+        # it is coming from)
+        v_north, v_east = utility.polar_to_cartesian(-wind_speed_mps,
+                                                     wind_direction_rad)
+        wind = wind.setX(v_east)
+        wind = wind.setY(v_north)
+        return wind
 
 
 def create_plots(results, output_filename, results_are_shown=False):
@@ -119,17 +191,11 @@ def create_plots(results, output_filename, results_are_shown=False):
     raise NotImplementedError
 
 
-def print_stats(launch_points, landing_points):
-    # print(launch_points)
-    # print(landing_points)
+def print_stats(launch_point, landing_points):
     distances = []
     bearings = []
 
-    # launch point is the same for every simulation
-    launch_point = launch_points[0]
     for landing_point in landing_points:
-        print(launch_point)
-        print(landing_point)
         distance, bearing = compute_distance_and_bearing(
             launch_point, landing_point)
         distances.append(distance)
@@ -138,33 +204,10 @@ def print_stats(launch_points, landing_points):
     print(
         "Rocket landing zone {:.1f}m ± {:.1f}m ".format(
             np.mean(distances), np.std(distances))
-        + "bearing {:3.2f}° ± {:3.4f}° ".format(
-            np.degrees(np.mean(bearings)),
-            np.degrees(np.std(bearings)))
+        + "bearing {:.1f}° ± {:.1f}° ".format(
+            np.degrees(np.mean(bearings)), np.degrees(np.std(bearings)))
         + "from launch site. Based on {} simulations.".format(
             len(landing_points)))
-
-
-class LandingPointListener(orhelper.AbstractSimulationListener):
-    def __init__(self, launch_point, landing_point):
-        self.launch_points = launch_point
-        self.landing_points = landing_point
-
-    def endSimulation(self, status, simulation_exception):
-        landing_position = status.getRocketWorldPosition()
-
-        conditions = status.getSimulationConditions()
-        launchpos = conditions.getLaunchSite()
-
-        geodetic_computation = conditions.getGeodeticComputation()
-
-        if geodetic_computation != geodetic_computation.FLAT:
-            raise ValueError("GeodeticComputationStrategy type not supported!")
-
-        self.launch_points.append(launchpos)
-        # print(launchpos)
-        self.landing_points.append(landing_position)
-        # print(landing_position)
 
 
 def compute_distance_and_bearing(start, end):
@@ -179,49 +222,6 @@ def compute_distance_and_bearing(start, end):
 
 METERS_PER_DEGREE_LATITUDE = 111325
 METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050
-
-
-class WindListener(orhelper.AbstractSimulationListener):
-    # Set the wind speed as a function of altitude
-
-    def postWindModel(self, status, wind):
-        # list of aloft data
-        # see https://en.wikipedia.org/wiki/Winds_aloft
-        # TODO: input from external file
-        altitudes_m = [0, 914, 1829, 2743, 3658, 5486, 7315, 9144, 10363,
-                       11887, 13716, 16154]
-        wind_directions_degree = [10, 0, 0, 310, 330, 340, 260, 250, 240, 250,
-                                  260, 260]
-        wind_speeds_mps = [10, 0, 0, 3, 3, 3, 9, 15, 15, 15, 14, 10]
-        if (len(altitudes_m) != len(wind_directions_degree)
-                or len(altitudes_m) != len(wind_speeds_mps)):
-            raise ValueError(
-                "Aloft data is incorrect! `altitudes_m`, "
-                + "`wind_directions_degree` and `wind_speeds_mps` must be of "
-                + "the same length.")
-
-        # interpolate at current altitude
-        # print(wind)
-        position = status.getRocketPosition()
-        #print("Altitude ", position.z)
-        # TODO: which fill_values shall be used above the aloft data? zero?
-        # last value? extrapolate?
-        interpolate_wind_speed_mps = scipy.interpolate.interp1d(
-            altitudes_m, wind_speeds_mps, bounds_error=False,
-            fill_value=(wind_speeds_mps[0], wind_speeds_mps[-1]))
-        wind_speed_mps = interpolate_wind_speed_mps(position.z)
-        interpolate_wind_direction_degree = scipy.interpolate.interp1d(
-            altitudes_m, wind_directions_degree, bounds_error=False,
-            fill_value=(wind_directions_degree[0], wind_directions_degree[-1]))
-        wind_direction_degree = interpolate_wind_direction_degree(position.z)
-        # give the wind in NE coordinates
-        # (where it is going, not where it is coming from)
-        v_north, v_east = -utility.polar_to_cartesian(wind_speed_mps,
-                                                      wind_direction_degree)
-        wind = wind.setX(v_east)
-        wind = wind.setY(v_north)
-        print(wind)
-        return wind
 
 
 if __name__ == "__main__":
