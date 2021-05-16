@@ -31,6 +31,8 @@ Tools and scripts for [OpenRocket](https://openrocket.info/) using Python and
    conda install numpy matplotlib click configparser scipy
    pip install orhelper
    ```
+   
+4. diana needs to find `OpenRocket-15.03.jar`. Call diana from the same folder or add the path to `JAVA_HOME`
 
 ## Usage
 
@@ -42,3 +44,37 @@ diana -h
 ```
 
 to get help and usage information.
+
+### Procedure
+1. Define your project in the ork-file with nominal parameters.
+2. At the moment, the very first simulation configuration is used. 
+3. Exept for the wind data, the following parameters can be used for dispersion analysis
+- Launch Rod Tilt (0 is vertical)
+- Launch Rod Azimuth (0 is north)
+4. Configure the standard deviation for every supported parameter in the `ini`-file. 
+5. Run diana
+
+### Limitations
+- only single stage rockets are supported
+- Check that the simulation-option *flath earth* is set.
+	
+### Wind Data
+Wind can be given as a multilevel dataset in the configuration file with the following vectors
+- Altitude (in m)
+- Direction (in °)
+- Windspeed (in m/s)
+
+Where to get these data? Aviation aloft data, or wind predictions from, e.g., windy.com
+
+for US
+- copy data from https://www.aviationweather.gov/windtemp/data?level=low&fcst=06&region=sfo&layout=on&date=
+- or alternatively AFTERNOON WINDS ALOFT FORECAST https://forecast.weather.gov/product.php?site=NWS&product=SRG&issuedby=REV
+- or https://rucsoundings.noaa.gov/
+- or could be downloaded automatically via
+https://api.weather.gov/products/types/FD8/locations/US7 and
+https://api.weather.gov/products/types/FD1/locations/US1
+
+for Poland: https://awiacja.imgw.pl/en/airmet-2/#
+
+worldwide
+https://www.windy.com/39.984/-119.697?500h,39.592,-120.048,8,i:pressure
