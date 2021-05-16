@@ -12,6 +12,8 @@ import math
 import collections
 import dataclasses
 
+import logging, sys
+
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
 
@@ -51,10 +53,14 @@ def diana(directory, filename, config, output, show):
     print("config file    : {}".format(config_file_path))
     print("output file    : {}".format(output_filename))
     print("output is shown: {}".format(results_are_shown))
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(converters={'list': lambda x: [float(i.strip()) for i in x.split(',')]})    
     config.read(config_file_path)
     print("config sections: {}".format(config.sections()))
     print("")
+
+    # setup of  logging on stderr.
+    # use logging.WARNING, or logging.DEBUG if necessary   
+    logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
     with orhelper.OpenRocketInstance() as instance:
         orh = orhelper.Helper(instance)
@@ -69,7 +75,7 @@ def diana(directory, filename, config, output, show):
         for i in range(n_simulations):
             print("Running simulation {:4} of {}".format(i + 1, n_simulations))
             randomize_simulation(sim, random_parameters)
-            landing_point, launch_point = run_simulation(orh, sim)
+            landing_point, launch_point = run_simulation(orh, sim, config)
             landing_points.append(landing_point)
 
         print_stats(launch_point, landing_points)
@@ -114,13 +120,13 @@ def randomize_simulation(sim, random_parameters):
     print("Used launch rail azimuth   = {:6.2f}°".format(azimuth))
 
 
-def run_simulation(orh, sim):
+def run_simulation(orh, sim, config):
     """Run a single simulation and return the results.
 
     :return:
         A 2-tuple containing the landing and launch position
     """
-    wind_listener = WindListener()
+    wind_listener = WindListener(config)
     landing_point_listener = LandingPointListener()
     orh.run_simulation(sim, listeners=(landing_point_listener, wind_listener))
     return (landing_point_listener.landing_points[0],
@@ -147,16 +153,21 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
 class WindListener(orhelper.AbstractSimulationListener):
     """Set the wind speed as a function of altitude."""
 
-    def __init__(self):
-        # list of aloft data
-        # see https://en.wikipedia.org/wiki/Winds_aloft
-        # TODO: input from external file
-        altitudes_m = [0, 914, 1829, 2743, 3658, 5486, 7315, 9144, 10363,
-                       11887, 13716, 16154]
-        wind_directions_degree = [
-            0, 0, 0, 310, 330, 340, 260, 250, 240, 250, 260, 260]
+    def __init__(self, config):
+        # read wind level model data from file
+        altitudes_m = config["WindModel"].getlist("Altitude")
+        wind_directions_degree = config["WindModel"].getlist("WindDirection")
+        wind_speeds_mps = config["WindModel"].getlist("WindSpeed")
+        
+        logging.debug('Input wind levels model data:')     
+        logging.debug('Altitude (m) ')
+        logging.debug(altitudes_m)
+        logging.debug("Direction (°) ")
+        logging.debug(wind_directions_degree)        
+        logging.debug("Wind speed (m/s) ")
+        logging.debug(wind_speeds_mps)
+        
         wind_directions_rad = np.radians(wind_directions_degree)
-        wind_speeds_mps = [5, 5, 0, 3, 3, 3, 9, 15, 15, 15, 14, 10]
         if (len(altitudes_m) != len(wind_directions_degree)
                 or len(altitudes_m) != len(wind_speeds_mps)):
             raise ValueError(
@@ -166,6 +177,7 @@ class WindListener(orhelper.AbstractSimulationListener):
 
         # TODO: which fill_values shall be used above the aloft data? zero?
         # last value? extrapolate?
+        # TODO: this i not safe if direction rotates over 180deg -> use x/y coordinates
         self.interpolate_wind_speed_mps = scipy.interpolate.interp1d(
             altitudes_m, wind_speeds_mps, bounds_error=False,
             fill_value=(wind_speeds_mps[0], wind_speeds_mps[-1]))
@@ -177,11 +189,9 @@ class WindListener(orhelper.AbstractSimulationListener):
         position = status.getRocketPosition()
         wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
         wind_direction_rad = self.interpolate_wind_direction_rad(position.z)
-        # give the wind in NE coordinates (where it is going to, not where
-        # it is coming from)
-        v_north, v_east = utility.polar_to_cartesian(-wind_speed_mps,
+        # give the wind in NE coordinates 
+        v_north, v_east = utility.polar_to_cartesian(wind_speed_mps,
                                                      wind_direction_rad)
-        # TODO: is X and Y set correctly with east/north, respectively?
         wind = wind.setY(v_north)
         wind = wind.setX(v_east)
         return wind
@@ -196,14 +206,17 @@ def print_stats(launch_point, landing_points):
     distances = []
     bearings = []
 
+    logging.debug('Results: distances in cartesian coordinates')
+    
     for landing_point in landing_points:
         distance, bearing = compute_distance_and_bearing(
             launch_point, landing_point)
         distances.append(distance)
         bearings.append(bearing)
 
-    print(distances)
-    print(bearings)
+    logging.debug('distances and bearings in polar coordinates')
+    logging.debug(distances)
+    logging.debug(bearings)
 
     print(
         "Rocket landing zone {:.1f}m ± {:.2f}m ".format(
@@ -219,9 +232,12 @@ def compute_distance_and_bearing(start, end):
           * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
     dy = ((end.getLatitudeDeg() - start.getLatitudeDeg())
           * METERS_PER_DEGREE_LATITUDE)
-    print('dx {:.1f}m, dy {:.1f}m'.format(dx, dy))
+    logging.debug('Longitude {:.1f}°, Latitude {:.1f}°'.format(end.getLongitudeDeg(), end.getLatitudeDeg()))
+    logging.debug('dx {:.1f}m, dy {:.1f}m'.format(dx, dy))
     distance = math.sqrt(dx * dx + dy * dy)
-    bearing = math.pi / 2. - math.atan(dy / dx)
+    bearing = math.pi / 2. - math.atan2(dy, dx)
+    if bearing > math.pi:
+        bearing = bearing - 2*math.pi
     return distance, bearing
 
 
