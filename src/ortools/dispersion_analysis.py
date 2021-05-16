@@ -72,7 +72,7 @@ def diana(directory, filename, config, output, show):
             landing_point, launch_point = run_simulation(orh, sim)
             landing_points.append(landing_point)
 
-    print_stats(launch_point, landing_points)
+        print_stats(launch_point, landing_points)
 
 
 def set_up_random_parameters(sim, config, rng):
@@ -83,21 +83,21 @@ def set_up_random_parameters(sim, config, rng):
     """
     options = sim.getOptions()
     azimuth_mean = options.getLaunchRodDirection()
-    azimuth_stddev = math.radians(float(config["LaunchRail"]["Elevation"]))
+    azimuth_stddev = math.radians(float(config["LaunchRail"]["Azimuth"]))
     elevation_mean = options.getLaunchRodAngle()
     elevation_stddev = math.radians(float(config["LaunchRail"]["Elevation"]))
 
-    print("Initial launch rail azimuth   = {:6.2f}°".format(
-        math.degrees(azimuth_mean)))
     print("Initial launch rail elevation = {:6.2f}°".format(
         math.degrees(elevation_mean)))
+    print("Initial launch rail azimuth   = {:6.2f}°".format(
+        math.degrees(azimuth_mean)))
 
     RandomParameters = collections.namedtuple("RandomParameters", [
         "elevation",
         "azimuth"])
     return RandomParameters(
         elevation=lambda: rng.normal(elevation_mean, elevation_stddev),
-        azimuth=lambda: rng.normal(elevation_mean, elevation_stddev))
+        azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev))
 
 
 def randomize_simulation(sim, random_parameters):
@@ -154,9 +154,9 @@ class WindListener(orhelper.AbstractSimulationListener):
         altitudes_m = [0, 914, 1829, 2743, 3658, 5486, 7315, 9144, 10363,
                        11887, 13716, 16154]
         wind_directions_degree = [
-            10, 0, 0, 310, 330, 340, 260, 250, 240, 250, 260, 260]
+            0, 0, 0, 310, 330, 340, 260, 250, 240, 250, 260, 260]
         wind_directions_rad = np.radians(wind_directions_degree)
-        wind_speeds_mps = [10, 0, 0, 3, 3, 3, 9, 15, 15, 15, 14, 10]
+        wind_speeds_mps = [5, 5, 0, 3, 3, 3, 9, 15, 15, 15, 14, 10]
         if (len(altitudes_m) != len(wind_directions_degree)
                 or len(altitudes_m) != len(wind_speeds_mps)):
             raise ValueError(
@@ -181,8 +181,9 @@ class WindListener(orhelper.AbstractSimulationListener):
         # it is coming from)
         v_north, v_east = utility.polar_to_cartesian(-wind_speed_mps,
                                                      wind_direction_rad)
-        wind = wind.setX(v_east)
+        # TODO: is X and Y set correctly with east/north, respectively?
         wind = wind.setY(v_north)
+        wind = wind.setX(v_east)
         return wind
 
 
@@ -201,8 +202,11 @@ def print_stats(launch_point, landing_points):
         distances.append(distance)
         bearings.append(bearing)
 
+    print(distances)
+    print(bearings)
+
     print(
-        "Rocket landing zone {:.1f}m ± {:.1f}m ".format(
+        "Rocket landing zone {:.1f}m ± {:.2f}m ".format(
             np.mean(distances), np.std(distances))
         + "bearing {:.1f}° ± {:.1f}° ".format(
             np.degrees(np.mean(bearings)), np.degrees(np.std(bearings)))
@@ -215,6 +219,7 @@ def compute_distance_and_bearing(start, end):
           * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
     dy = ((end.getLatitudeDeg() - start.getLatitudeDeg())
           * METERS_PER_DEGREE_LATITUDE)
+    print('dx {:.1f}m, dy {:.1f}m'.format(dx, dy))
     distance = math.sqrt(dx * dx + dy * dy)
     bearing = math.pi / 2. - math.atan(dy / dx)
     return distance, bearing
