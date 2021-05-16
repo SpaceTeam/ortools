@@ -25,7 +25,7 @@ def find_latest_file(extension, directory="."):
     return max(files, key=os.path.getmtime)
 
 
-def polar_to_cartesian(r, phi, phi_is_in_degree=True):
+def polar_to_cartesian(r, phi, phi_is_in_degree=False):
     if phi_is_in_degree:
         phi = math.radians(phi)
     return r * math.cos(phi), r * math.sin(phi)
