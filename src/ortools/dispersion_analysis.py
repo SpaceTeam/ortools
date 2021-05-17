@@ -90,33 +90,33 @@ def set_up_random_parameters(sim, config, rng):
     options = sim.getOptions()
     azimuth_mean = options.getLaunchRodDirection()
     azimuth_stddev = math.radians(float(config["LaunchRail"]["Azimuth"]))
-    elevation_mean = options.getLaunchRodAngle()
-    elevation_stddev = math.radians(float(config["LaunchRail"]["Elevation"]))
+    tilt_mean = options.getLaunchRodAngle()
+    tilt_stddev = math.radians(float(config["LaunchRail"]["Tilt"]))
 
-    print("Initial launch rail elevation = {:6.2f}°".format(
-        math.degrees(elevation_mean)))
+    print("Initial launch rail tilt = {:6.2f}°".format(
+        math.degrees(tilt_mean)))
     print("Initial launch rail azimuth   = {:6.2f}°".format(
         math.degrees(azimuth_mean)))
 
     RandomParameters = collections.namedtuple("RandomParameters", [
-        "elevation",
+        "tilt",
         "azimuth"])
     return RandomParameters(
-        elevation=lambda: rng.normal(elevation_mean, elevation_stddev),
+        tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
         azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev))
 
 
 def randomize_simulation(sim, random_parameters):
     """Set simulation parameters to random samples."""
     options = sim.getOptions()
-    options.setLaunchRodAngle(random_parameters.elevation())
+    options.setLaunchRodAngle(random_parameters.tilt())
     # otherwise launch rod direction cannot be altered
     options.setLaunchIntoWind(False)
     options.setLaunchRodDirection(random_parameters.azimuth())
 
-    elevation = math.degrees(options.getLaunchRodAngle())
+    tilt = math.degrees(options.getLaunchRodAngle())
     azimuth = math.degrees(options.getLaunchRodDirection())
-    print("Used launch rail elevation = {:6.2f}°".format(elevation))
+    print("Used launch rail tilt = {:6.2f}°".format(tilt))
     print("Used launch rail azimuth   = {:6.2f}°".format(azimuth))
 
 
