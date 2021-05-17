@@ -66,8 +66,18 @@ def diana(directory, filename, config, output, show):
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
     with orhelper.OpenRocketInstance() as instance:
+        idx_simulation = int(config["General"]["SimulationIndex"])
+        
         orh = orhelper.Helper(instance)
-        sim = orh.load_doc(ork_file_path).getSimulation(0)
+        doc = orh.load_doc(ork_file_path)        
+        simulation_count = doc.getSimulationCount()
+        
+        if idx_simulation < 0 or idx_simulation > (simulation_count-1):
+            raise ValueError("Wrong value of SimulationIndex!")
+        sim = doc.getSimulation(idx_simulation)
+        
+        print("Load simulation number {} called {}.".format(
+            idx_simulation, sim.getName()))
 
         rng = np.random.default_rng()
         random_parameters = set_up_random_parameters(sim, config, rng)
@@ -136,11 +146,38 @@ def run_simulation(orh, sim, config):
     :return:
         A 2-tuple containing the landing and launch position
     """
-    landing_point_listener = LandingPointListener()
     wind_listener = WindListener(config["WindModel"]["DataFile"])
-    orh.run_simulation(sim, listeners=(landing_point_listener, wind_listener))
+    launch_point_listener = LaunchPointListener()
+    landing_point_listener = LandingPointListener()
+    orh.run_simulation(
+        sim,
+        listeners=(
+            launch_point_listener,
+            landing_point_listener,
+            wind_listener))
     return (landing_point_listener.landing_points[0],
-            landing_point_listener.launch_points[0])
+            launch_point_listener.launch_point)
+
+
+class LaunchPointListener(orhelper.AbstractSimulationListener):
+    """Return the launch point at the startSimulation callback."""
+
+    def __init__(self):
+        # FIXME: This is a weird workaround because I don't know how to
+        # create the member variables of the correct type.
+        self.launch_point = None
+
+    def startSimulation(self, status):
+        """Analyze the simulation conditions of openrocket.
+        
+        These are the launch point and if a supported 
+        geodetic model is set."""
+        conditions = status.getSimulationConditions()
+        self.launch_point = conditions.getLaunchSite()
+        
+        geodetic_computation = conditions.getGeodeticComputation()
+        if geodetic_computation != geodetic_computation.FLAT:
+            raise ValueError("GeodeticComputationStrategy type not supported!")
 
 
 class LandingPointListener(orhelper.AbstractSimulationListener):
@@ -155,12 +192,6 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
     def endSimulation(self, status, simulation_exception):
         """Return the landing position from openrocket."""
         self.landing_points.append(status.getRocketWorldPosition())
-        conditions = status.getSimulationConditions()
-        self.launch_points.append(conditions.getLaunchSite())
-        geodetic_computation = conditions.getGeodeticComputation()
-
-        if geodetic_computation != geodetic_computation.FLAT:
-            raise ValueError("GeodeticComputationStrategy type not supported!")
 
 
 class WindListener(orhelper.AbstractSimulationListener):
