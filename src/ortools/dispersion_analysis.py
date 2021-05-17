@@ -1,6 +1,8 @@
 import ortools.utility as utility
 
 import orhelper
+from orhelper import FlightDataType, FlightEvent
+
 import numpy as np
 import matplotlib as mpl
 from matplotlib import pyplot as plt
@@ -67,15 +69,15 @@ def diana(directory, filename, config, output, show):
 
     with orhelper.OpenRocketInstance() as instance:
         idx_simulation = int(config["General"]["SimulationIndex"])
-        
+
         orh = orhelper.Helper(instance)
-        doc = orh.load_doc(ork_file_path)        
+        doc = orh.load_doc(ork_file_path)
         simulation_count = doc.getSimulationCount()
-        
-        if idx_simulation < 0 or idx_simulation > (simulation_count-1):
+
+        if idx_simulation < 0 or idx_simulation > (simulation_count - 1):
             raise ValueError("Wrong value of SimulationIndex!")
         sim = doc.getSimulation(idx_simulation)
-        
+
         print("Load simulation number {} called {}.".format(
             idx_simulation, sim.getName()))
 
@@ -83,15 +85,18 @@ def diana(directory, filename, config, output, show):
         random_parameters = set_up_random_parameters(sim, config, rng)
 
         landing_points = []
+        apogee_points = []
         n_simulations = int(config["General"]["NumberOfSimulations"])
 
         for i in range(n_simulations):
             print("Running simulation {:4} of {}".format(i + 1, n_simulations))
             randomize_simulation(sim, random_parameters)
-            landing_point, launch_point = run_simulation(orh, sim, config)
+            landing_point, launch_point, apogee = run_simulation(
+                orh, sim, config)
             landing_points.append(landing_point)
+            apogee_points.append(apogee)
 
-        print_stats(launch_point, landing_points)
+        print_stats(launch_point, landing_points, apogee_points)
 
 
 def make_paths_in_config_absolute(config, config_file_path):
@@ -155,8 +160,34 @@ def run_simulation(orh, sim, config):
             launch_point_listener,
             landing_point_listener,
             wind_listener))
+
+    # process results
+    events = orh.get_events(sim)
+    data = orh.get_timeseries(sim, [
+        FlightDataType.TYPE_TIME,
+        FlightDataType.TYPE_ALTITUDE,
+        FlightDataType.TYPE_LONGITUDE,
+        FlightDataType.TYPE_LATITUDE,
+    ])
+    def index_at(t): return (
+        np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
+
+    for event, times in events.items():
+        if event is FlightEvent.APOGEE:
+            for time in times:
+                apogee = orh.openrocket.util.WorldCoordinate(
+                    math.degrees(
+                        data[FlightDataType.TYPE_LATITUDE][index_at(time)]),
+                    math.degrees(
+                        data[FlightDataType.TYPE_LONGITUDE][index_at(time)]),
+                    data[FlightDataType.TYPE_ALTITUDE][index_at(time)])
+                logging.debug("Apogee at {:.1f}s: longitude {:.1f}°, latitude,{:.1f}°, altitude {:.1f}m".format(
+                    time,
+                    apogee.getLatitudeDeg(), 
+                    apogee.getLongitudeDeg(), 
+                    apogee.getAltitude()))
     return (landing_point_listener.landing_points[0],
-            launch_point_listener.launch_point)
+            launch_point_listener.launch_point, apogee)
 
 
 class LaunchPointListener(orhelper.AbstractSimulationListener):
@@ -169,12 +200,12 @@ class LaunchPointListener(orhelper.AbstractSimulationListener):
 
     def startSimulation(self, status):
         """Analyze the simulation conditions of openrocket.
-        
-        These are the launch point and if a supported 
+
+        These are the launch point and if a supported
         geodetic model is set."""
         conditions = status.getSimulationConditions()
         self.launch_point = conditions.getLaunchSite()
-        
+
         geodetic_computation = conditions.getGeodeticComputation()
         if geodetic_computation != geodetic_computation.FLAT:
             raise ValueError("GeodeticComputationStrategy type not supported!")
@@ -266,30 +297,35 @@ def create_plots(results, output_filename, results_are_shown=False):
     raise NotImplementedError
 
 
-def print_stats(launch_point, landing_points):
+def print_stats(launch_point, landing_points, apogee_points):
     """Print statistics of all simulations."""
     distances = []
     bearings = []
+    max_altitude = []
 
     logging.debug('Results: distances in cartesian coordinates')
-
     for landing_point in landing_points:
         distance, bearing = compute_distance_and_bearing(
             launch_point, landing_point)
         distances.append(distance)
         bearings.append(bearing)
 
+    for apogee in apogee_points:
+        max_altitude.append(apogee.getAltitude())
+
     logging.debug('distances and bearings in polar coordinates')
     logging.debug(distances)
     logging.debug(bearings)
 
+    print("Apogee: {:.1f}m ± {:.2f}m ".format(
+        np.mean(max_altitude), np.std(max_altitude)))
     print(
         "Rocket landing zone {:.1f}m ± {:.2f}m ".format(
             np.mean(distances), np.std(distances))
         + "bearing {:.1f}° ± {:.1f}° ".format(
-            np.degrees(np.mean(bearings)), np.degrees(np.std(bearings)))
-        + "from launch site. Based on {} simulations.".format(
-            len(landing_points)))
+            np.degrees(np.mean(bearings)), np.degrees(np.std(bearings))))
+    print("Based on {} simulations.".format(
+        len(landing_points)))
 
 
 def compute_distance_and_bearing(start, end):
