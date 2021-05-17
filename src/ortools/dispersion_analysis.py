@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 import click
 import configparser
 import scipy.interpolate
+import pyproj
 
 import os
 import sys
@@ -91,12 +92,16 @@ def diana(directory, filename, config, output, show):
         for i in range(n_simulations):
             print("Running simulation {:4} of {}".format(i + 1, n_simulations))
             randomize_simulation(sim, random_parameters)
-            landing_point, launch_point, apogee = run_simulation(
+            landing_point, launch_point, geodetic_computation, apogee = run_simulation(
                 orh, sim, config)
             landing_points.append(landing_point)
             apogee_points.append(apogee)
 
-        print_stats(launch_point, landing_points, apogee_points)
+        print_stats(
+            launch_point,
+            landing_points,
+            apogee_points,
+            geodetic_computation)
 
 
 def make_paths_in_config_absolute(config, config_file_path):
@@ -183,11 +188,13 @@ def run_simulation(orh, sim, config):
                     data[FlightDataType.TYPE_ALTITUDE][index_at(time)])
                 logging.debug("Apogee at {:.1f}s: longitude {:.1f}°, latitude,{:.1f}°, altitude {:.1f}m".format(
                     time,
-                    apogee.getLatitudeDeg(), 
-                    apogee.getLongitudeDeg(), 
+                    apogee.getLatitudeDeg(),
+                    apogee.getLongitudeDeg(),
                     apogee.getAltitude()))
     return (landing_point_listener.landing_points[0],
-            launch_point_listener.launch_point, apogee)
+            launch_point_listener.launch_point,
+            launch_point_listener.geodetic_computation,
+            apogee)
 
 
 class LaunchPointListener(orhelper.AbstractSimulationListener):
@@ -197,6 +204,7 @@ class LaunchPointListener(orhelper.AbstractSimulationListener):
         # FIXME: This is a weird workaround because I don't know how to
         # create the member variables of the correct type.
         self.launch_point = None
+        self.geodetic_computation = None
 
     def startSimulation(self, status):
         """Analyze the simulation conditions of openrocket.
@@ -206,8 +214,10 @@ class LaunchPointListener(orhelper.AbstractSimulationListener):
         conditions = status.getSimulationConditions()
         self.launch_point = conditions.getLaunchSite()
 
-        geodetic_computation = conditions.getGeodeticComputation()
-        if geodetic_computation != geodetic_computation.FLAT:
+        self.geodetic_computation = conditions.getGeodeticComputation()
+        logging.debug(self.geodetic_computation)
+        if (self.geodetic_computation != self.geodetic_computation.FLAT and
+                self.geodetic_computation != self.geodetic_computation.WGS84):
             raise ValueError("GeodeticComputationStrategy type not supported!")
 
 
@@ -297,7 +307,8 @@ def create_plots(results, output_filename, results_are_shown=False):
     raise NotImplementedError
 
 
-def print_stats(launch_point, landing_points, apogee_points):
+def print_stats(launch_point, landing_points,
+                apogee_points, geodetic_computation):
     """Print statistics of all simulations."""
     distances = []
     bearings = []
@@ -305,8 +316,19 @@ def print_stats(launch_point, landing_points, apogee_points):
 
     logging.debug('Results: distances in cartesian coordinates')
     for landing_point in landing_points:
-        distance, bearing = compute_distance_and_bearing(
-            launch_point, landing_point)
+
+        if geodetic_computation == geodetic_computation.FLAT:
+            distance, bearing = compute_distance_and_bearing_flat(
+                launch_point, landing_point)
+        elif geodetic_computation == geodetic_computation.WGS84:
+            geodesic = pyproj.Geod(ellps='WGS84')
+            fwd_azimuth, back_azimuth, distance = geodesic.inv(
+                launch_point.getLongitudeDeg(),
+                launch_point.getLatitudeDeg(),
+                landing_point.getLongitudeDeg(),
+                landing_point.getLatitudeDeg())
+            bearing = np.radians(fwd_azimuth)
+
         distances.append(distance)
         bearings.append(bearing)
 
@@ -328,8 +350,10 @@ def print_stats(launch_point, landing_points, apogee_points):
         len(landing_points)))
 
 
-def compute_distance_and_bearing(start, end):
+def compute_distance_and_bearing_flat(start, end):
     """Return distance and bearing betweeen two points.
+
+    valid for flat earth approximation only.
 
     Arguments:
     start, end --  two points of Coordinate class
