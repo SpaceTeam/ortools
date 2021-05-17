@@ -12,7 +12,8 @@ import math
 import collections
 import dataclasses
 
-import logging, sys
+import logging
+import sys
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -53,13 +54,14 @@ def diana(directory, filename, config, output, show):
     print("config file    : {}".format(config_file_path))
     print("output file    : {}".format(output_filename))
     print("output is shown: {}".format(results_are_shown))
-    config = configparser.ConfigParser(converters={'list': lambda x: [float(i.strip()) for i in x.split(',')]})    
+    config = configparser.ConfigParser(
+        converters={'list': lambda x: [float(i.strip()) for i in x.split(',')]})
     config.read(config_file_path)
     print("config sections: {}".format(config.sections()))
     print("")
 
     # setup of  logging on stderr.
-    # use logging.WARNING, or logging.DEBUG if necessary   
+    # use logging.WARNING, or logging.DEBUG if necessary
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
     with orhelper.OpenRocketInstance() as instance:
@@ -134,6 +136,8 @@ def run_simulation(orh, sim, config):
 
 
 class LandingPointListener(orhelper.AbstractSimulationListener):
+    """Return the landing point at the endSimulation callback."""
+
     def __init__(self):
         # FIXME: This is a weird workaround because I don't know how to
         # create the member variables of the correct type.
@@ -141,6 +145,7 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
         self.launch_points = []
 
     def endSimulation(self, status, simulation_exception):
+        """Return the landing position from openrocket."""
         self.landing_points.append(status.getRocketWorldPosition())
         conditions = status.getSimulationConditions()
         self.launch_points.append(conditions.getLaunchSite())
@@ -154,19 +159,23 @@ class WindListener(orhelper.AbstractSimulationListener):
     """Set the wind speed as a function of altitude."""
 
     def __init__(self, config):
-        # read wind level model data from file
+        """Read wind level model data from file.
+
+        Save them as interpolation functions to be used in other callbacks
+        of this class.
+        """
         altitudes_m = config["WindModel"].getlist("Altitude")
         wind_directions_degree = config["WindModel"].getlist("WindDirection")
         wind_speeds_mps = config["WindModel"].getlist("WindSpeed")
-        
-        logging.debug('Input wind levels model data:')     
+
+        logging.debug('Input wind levels model data:')
         logging.debug('Altitude (m) ')
         logging.debug(altitudes_m)
         logging.debug("Direction (°) ")
-        logging.debug(wind_directions_degree)        
+        logging.debug(wind_directions_degree)
         logging.debug("Wind speed (m/s) ")
         logging.debug(wind_speeds_mps)
-        
+
         wind_directions_rad = np.radians(wind_directions_degree)
         if (len(altitudes_m) != len(wind_directions_degree)
                 or len(altitudes_m) != len(wind_speeds_mps)):
@@ -177,7 +186,8 @@ class WindListener(orhelper.AbstractSimulationListener):
 
         # TODO: which fill_values shall be used above the aloft data? zero?
         # last value? extrapolate?
-        # TODO: this i not safe if direction rotates over 180deg -> use x/y coordinates
+        # TODO: this i not safe if direction rotates over 180deg -> use x/y
+        # coordinates
         self.interpolate_wind_speed_mps = scipy.interpolate.interp1d(
             altitudes_m, wind_speeds_mps, bounds_error=False,
             fill_value=(wind_speeds_mps[0], wind_speeds_mps[-1]))
@@ -186,10 +196,11 @@ class WindListener(orhelper.AbstractSimulationListener):
             fill_value=(wind_directions_rad[0], wind_directions_rad[-1]))
 
     def postWindModel(self, status, wind):
+        """Set the wind coordinates at every simulation step."""
         position = status.getRocketPosition()
         wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
         wind_direction_rad = self.interpolate_wind_direction_rad(position.z)
-        # give the wind in NE coordinates 
+        # give the wind in NE coordinates
         v_north, v_east = utility.polar_to_cartesian(wind_speed_mps,
                                                      wind_direction_rad)
         wind = wind.setY(v_north)
@@ -203,11 +214,12 @@ def create_plots(results, output_filename, results_are_shown=False):
 
 
 def print_stats(launch_point, landing_points):
+    """Print statistics of all simulations."""
     distances = []
     bearings = []
 
     logging.debug('Results: distances in cartesian coordinates')
-    
+
     for landing_point in landing_points:
         distance, bearing = compute_distance_and_bearing(
             launch_point, landing_point)
@@ -228,16 +240,26 @@ def print_stats(launch_point, landing_points):
 
 
 def compute_distance_and_bearing(start, end):
+    """Return distance and bearing betweeen two points.
+
+    Arguments:
+    start, end --  two points of Coordinate class
+
+    Return:
+    distance -- in m
+    bearing -- in degree
+    """
     dx = ((end.getLongitudeDeg() - start.getLongitudeDeg())
           * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
     dy = ((end.getLatitudeDeg() - start.getLatitudeDeg())
           * METERS_PER_DEGREE_LATITUDE)
-    logging.debug('Longitude {:.1f}°, Latitude {:.1f}°'.format(end.getLongitudeDeg(), end.getLatitudeDeg()))
+    logging.debug('Longitude {:.1f}°, Latitude {:.1f}°'.format(
+        end.getLongitudeDeg(), end.getLatitudeDeg()))
     logging.debug('dx {:.1f}m, dy {:.1f}m'.format(dx, dy))
     distance = math.sqrt(dx * dx + dy * dy)
     bearing = math.pi / 2. - math.atan2(dy, dx)
     if bearing > math.pi:
-        bearing = bearing - 2*math.pi
+        bearing = bearing - 2 * math.pi
     return distance, bearing
 
 
