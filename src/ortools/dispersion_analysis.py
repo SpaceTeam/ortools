@@ -8,12 +8,12 @@ import click
 import configparser
 import scipy.interpolate
 
+import os
+import sys
 import math
 import collections
-import dataclasses
-
 import logging
-import sys
+
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -54,14 +54,15 @@ def diana(directory, filename, config, output, show):
     print("config file    : {}".format(config_file_path))
     print("output file    : {}".format(output_filename))
     print("output is shown: {}".format(results_are_shown))
-    config = configparser.ConfigParser(
-        converters={'list': lambda x: [float(i.strip()) for i in x.split(',')]})
+    config = configparser.ConfigParser()
+    # TODO: Define default values for all parameters of the .ini fileata file)
     config.read(config_file_path)
+    make_paths_in_config_absolute(config, config_file_path)
     print("config sections: {}".format(config.sections()))
     print("")
 
-    # setup of  logging on stderr.
-    # use logging.WARNING, or logging.DEBUG if necessary
+    # Setup of logging on stderr
+    # Use logging.WARNING, or logging.DEBUG if necessary
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
     with orhelper.OpenRocketInstance() as instance:
@@ -81,6 +82,13 @@ def diana(directory, filename, config, output, show):
             landing_points.append(landing_point)
 
         print_stats(launch_point, landing_points)
+
+
+def make_paths_in_config_absolute(config, config_file_path):
+    """Turn all paths in the diana config file into absolute ones."""
+    directory = os.path.dirname(os.path.abspath(config_file_path))
+    config["WindModel"]["DataFile"] = os.path.join(
+        directory, config["WindModel"]["DataFile"])
 
 
 def set_up_random_parameters(sim, config, rng):
@@ -112,7 +120,7 @@ def randomize_simulation(sim, random_parameters):
     """Set simulation parameters to random samples."""
     options = sim.getOptions()
     options.setLaunchRodAngle(random_parameters.tilt())
-    # otherwise launch rod direction cannot be altered
+    # Otherwise launch rod direction cannot be altered
     options.setLaunchIntoWind(False)
     options.setLaunchRodDirection(random_parameters.azimuth())
 
@@ -128,8 +136,8 @@ def run_simulation(orh, sim, config):
     :return:
         A 2-tuple containing the landing and launch position
     """
-    wind_listener = WindListener(config)
     landing_point_listener = LandingPointListener()
+    wind_listener = WindListener(config["WindModel"]["DataFile"])
     orh.run_simulation(sim, listeners=(landing_point_listener, wind_listener))
     return (landing_point_listener.landing_points[0],
             landing_point_listener.launch_points[0])
@@ -158,15 +166,25 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
 class WindListener(orhelper.AbstractSimulationListener):
     """Set the wind speed as a function of altitude."""
 
-    def __init__(self, config):
+    def __init__(self, wind_model_file=""):
         """Read wind level model data from file.
 
         Save them as interpolation functions to be used in other callbacks
         of this class.
         """
-        altitudes_m = config["WindModel"].getlist("Altitude")
-        wind_directions_degree = config["WindModel"].getlist("WindDirection")
-        wind_speeds_mps = config["WindModel"].getlist("WindSpeed")
+        try:
+            # Read wind level model data from file
+            data = np.loadtxt(wind_model_file)
+        except (IOError, FileNotFoundError):
+            self._default_wind_model_is_used = True
+            print("Warning: wind model file '{}' ".format(wind_model_file)
+                  + "not found! Default wind model will be used.")
+            return
+
+        self._default_wind_model_is_used = False
+        altitudes_m = data[:, 0]
+        wind_directions_degree = data[:, 1]
+        wind_speeds_mps = data[:, 2]
 
         logging.debug('Input wind levels model data:')
         logging.debug('Altitude (m) ')
@@ -181,13 +199,13 @@ class WindListener(orhelper.AbstractSimulationListener):
                 or len(altitudes_m) != len(wind_speeds_mps)):
             raise ValueError(
                 "Aloft data is incorrect! `altitudes_m`, "
-                + "`wind_directions_degree` and `wind_speeds_mps` must be of "
-                + "the same length.")
+                + "`wind_directions_degree` and `wind_speeds_mps` must be "
+                + "of the same length.")
 
-        # TODO: which fill_values shall be used above the aloft data? zero?
-        # last value? extrapolate?
-        # TODO: this i not safe if direction rotates over 180deg -> use x/y
-        # coordinates
+        # TODO: Which fill_values shall be used above the aloft
+        # data? zero? last value? extrapolate?
+        # TODO: This is not safe if direction rotates over 180deg ->
+        # use x/y coordinates
         self.interpolate_wind_speed_mps = scipy.interpolate.interp1d(
             altitudes_m, wind_speeds_mps, bounds_error=False,
             fill_value=(wind_speeds_mps[0], wind_speeds_mps[-1]))
@@ -197,15 +215,19 @@ class WindListener(orhelper.AbstractSimulationListener):
 
     def postWindModel(self, status, wind):
         """Set the wind coordinates at every simulation step."""
-        position = status.getRocketPosition()
-        wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
-        wind_direction_rad = self.interpolate_wind_direction_rad(position.z)
-        # give the wind in NE coordinates
-        v_north, v_east = utility.polar_to_cartesian(wind_speed_mps,
-                                                     wind_direction_rad)
-        wind = wind.setY(v_north)
-        wind = wind.setX(v_east)
-        return wind
+        if self._default_wind_model_is_used:
+            return wind
+        else:
+            position = status.getRocketPosition()
+            wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
+            wind_direction_rad = self.interpolate_wind_direction_rad(
+                position.z)
+            # Give the wind in NE coordinates
+            v_north, v_east = utility.polar_to_cartesian(wind_speed_mps,
+                                                         wind_direction_rad)
+            wind = wind.setY(v_north)
+            wind = wind.setX(v_east)
+            return wind
 
 
 def create_plots(results, output_filename, results_are_shown=False):
@@ -253,9 +275,9 @@ def compute_distance_and_bearing(start, end):
           * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
     dy = ((end.getLatitudeDeg() - start.getLatitudeDeg())
           * METERS_PER_DEGREE_LATITUDE)
-    logging.debug('Longitude {:.1f}°, Latitude {:.1f}°'.format(
+    logging.debug("Longitude {:.1f}°, Latitude {:.1f}°".format(
         end.getLongitudeDeg(), end.getLatitudeDeg()))
-    logging.debug('dx {:.1f}m, dy {:.1f}m'.format(dx, dy))
+    logging.debug("dx {:.1f}m, dy {:.1f}m".format(dx, dy))
     distance = math.sqrt(dx * dx + dy * dy)
     bearing = math.pi / 2. - math.atan2(dy, dx)
     if bearing > math.pi:
