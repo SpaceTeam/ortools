@@ -198,7 +198,7 @@ def run_simulation(orh, sim, config):
 
 
 class LaunchPointListener(orhelper.AbstractSimulationListener):
-    """Return the launch point at the startSimulation callback."""
+    """Return information at the startSimulation callback."""
 
     def __init__(self):
         # FIXME: This is a weird workaround because I don't know how to
@@ -285,21 +285,25 @@ class WindListener(orhelper.AbstractSimulationListener):
             altitudes_m, wind_directions_rad, bounds_error=False,
             fill_value=(wind_directions_rad[0], wind_directions_rad[-1]))
 
-    def postWindModel(self, status, wind):
+    def preWindModel(self, status):
         """Set the wind coordinates at every simulation step."""
         if self._default_wind_model_is_used:
-            return wind
+            return None
         else:
             position = status.getRocketPosition()
             wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
             wind_direction_rad = self.interpolate_wind_direction_rad(
                 position.z)
-            # Give the wind in NE coordinates
-            v_north, v_east = utility.polar_to_cartesian(wind_speed_mps,
-                                                         wind_direction_rad)
-            wind = wind.setY(v_north)
-            wind = wind.setX(v_east)
-            return wind
+
+            wind_model = status.getSimulationConditions().getWindModel()
+            wind_model.setDirection(wind_direction_rad)
+            wind_model.setAverage(wind_speed_mps)
+            status.getSimulationConditions().setWindModel(wind_model)
+
+            return None
+
+    def postWindModel(self, status, wind):
+        logging.debug("Wind: {}".format(wind))
 
 
 def create_plots(results, output_filename, results_are_shown=False):
