@@ -55,6 +55,8 @@ to get help and usage information.
 3. Except for the wind data, the following parameters can be used for dispersion analysis
    - Launch Rod Tilt (0 is vertical)
    - Launch Rod Azimuth (0 is north)
+   - Thrust Factor (1 is nominal)
+   - Thrust increase due to decreased ambient pressure. This is set via the nozzle diameter (set 0 to deactivate this feature).
 4. Configure the standard deviation for every supported parameter in the `ini`-file.
 5. Run `diana`
 
@@ -62,7 +64,7 @@ to get help and usage information.
 ### Limitations
 
 - Only single stage rockets are supported
-- Check that the simulation option **flat earth** is set.
+- Check that the simulation option **flat earth** or **WGS84** is set.
 
 
 ### Wind Data

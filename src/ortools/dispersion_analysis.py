@@ -18,6 +18,10 @@ import collections
 import logging
 
 
+STANDARD_PRESSURE = 101325.0  # The standard air pressure (1.01325 bar)
+METERS_PER_DEGREE_LATITUDE = 111325
+METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050
+
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
 
@@ -163,7 +167,9 @@ def run_simulation(orh, sim, config, random_parameters):
     wind_listener = WindListener(config["WindModel"]["DataFile"])
     launch_point_listener = LaunchPointListener()
     landing_point_listener = LandingPointListener()
-    motor_listener = MotorListener(random_parameters.thrust_factor())
+    motor_listener = MotorListener(
+        random_parameters.thrust_factor(), float(
+            config["Propulsion"]["NozzleDiameterMM2"]))
 
     orh.run_simulation(
         sim,
@@ -245,12 +251,23 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
 class MotorListener(orhelper.AbstractSimulationListener):
     """Overrides the thrust of the motor."""
 
-    def __init__(self, thrust_factor):
+    def __init__(self, thrust_factor, nozzle_area_sqmm):
         self.thrust_factor = thrust_factor
-        print("Used thrust factor = {:6.2f}°".format(thrust_factor))
+        print("Used thrust factor = {:6.2f}".format(thrust_factor))
+        self.nozzle_area = nozzle_area_sqmm * 1e-6
+        print("Nozzle area = {:6.2g}mm^2".format(nozzle_area_sqmm))
+        self.pressure = STANDARD_PRESSURE
+
+    def postAtmosphericModel(self, status, atmospheric_conditions):
+        """Get the ambient pressure from the atmospheric model"""
+        self.pressure = atmospheric_conditions.getPressure()
 
     def postSimpleThrustCalculation(self, status, thrust):
         """Returns the adapted thrust."""
+        thrust_increase = (
+            STANDARD_PRESSURE - self.pressure) * self.nozzle_area
+        logging.debug("Thrust increase due to decreased ambient pressure = {:6.2f}N".format(
+            thrust_increase))
         return self.thrust_factor * thrust
 
 
@@ -397,10 +414,6 @@ def compute_distance_and_bearing_flat(start, end):
     if bearing > math.pi:
         bearing = bearing - 2 * math.pi
     return distance, bearing
-
-
-METERS_PER_DEGREE_LATITUDE = 111325
-METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050
 
 
 if __name__ == "__main__":
