@@ -93,7 +93,7 @@ def diana(directory, filename, config, output, show):
             print("Running simulation {:4} of {}".format(i + 1, n_simulations))
             randomize_simulation(sim, random_parameters)
             landing_point, launch_point, geodetic_computation, apogee = run_simulation(
-                orh, sim, config)
+                orh, sim, config, random_parameters)
             landing_points.append(landing_point)
             apogee_points.append(apogee)
 
@@ -123,6 +123,8 @@ def set_up_random_parameters(sim, config, rng):
     tilt_mean = options.getLaunchRodAngle()
     tilt_stddev = math.radians(float(config["LaunchRail"]["Tilt"]))
 
+    thrust_factor_stddev = float(config["Propulsion"]["ThrustFactor"])
+
     print("Initial launch rail tilt = {:6.2f}°".format(
         math.degrees(tilt_mean)))
     print("Initial launch rail azimuth   = {:6.2f}°".format(
@@ -130,10 +132,12 @@ def set_up_random_parameters(sim, config, rng):
 
     RandomParameters = collections.namedtuple("RandomParameters", [
         "tilt",
-        "azimuth"])
+        "azimuth",
+        "thrust_factor"])
     return RandomParameters(
         tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
-        azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev))
+        azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
+        thrust_factor=lambda: rng.normal(1, thrust_factor_stddev))
 
 
 def randomize_simulation(sim, random_parameters):
@@ -150,7 +154,7 @@ def randomize_simulation(sim, random_parameters):
     print("Used launch rail azimuth   = {:6.2f}°".format(azimuth))
 
 
-def run_simulation(orh, sim, config):
+def run_simulation(orh, sim, config, random_parameters):
     """Run a single simulation and return the results.
 
     :return:
@@ -159,12 +163,15 @@ def run_simulation(orh, sim, config):
     wind_listener = WindListener(config["WindModel"]["DataFile"])
     launch_point_listener = LaunchPointListener()
     landing_point_listener = LandingPointListener()
+    motor_listener = MotorListener(random_parameters.thrust_factor())
+
     orh.run_simulation(
         sim,
         listeners=(
             launch_point_listener,
             landing_point_listener,
-            wind_listener))
+            wind_listener,
+            motor_listener))
 
     # process results
     events = orh.get_events(sim)
@@ -233,6 +240,18 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
     def endSimulation(self, status, simulation_exception):
         """Return the landing position from openrocket."""
         self.landing_points.append(status.getRocketWorldPosition())
+
+
+class MotorListener(orhelper.AbstractSimulationListener):
+    """Overrides the thrust of the motor."""
+
+    def __init__(self, thrust_factor):
+        self.thrust_factor = thrust_factor
+        print("Used thrust factor = {:6.2f}°".format(thrust_factor))
+
+    def postSimpleThrustCalculation(self, status, thrust):
+        """Returns the adapted thrust."""
+        return self.thrust_factor * thrust
 
 
 class WindListener(orhelper.AbstractSimulationListener):
