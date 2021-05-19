@@ -1,8 +1,6 @@
 import ortools.utility as utility
 
 import orhelper
-from orhelper import FlightDataType, FlightEvent
-
 import numpy as np
 import matplotlib as mpl
 from matplotlib import pyplot as plt
@@ -19,8 +17,8 @@ import logging
 
 
 STANDARD_PRESSURE = 101325.0  # The standard air pressure (1.01325 bar)
-METERS_PER_DEGREE_LATITUDE = 111325
-METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050
+METERS_PER_DEGREE_LATITUDE = 111325.0
+METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050.0
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -52,60 +50,40 @@ def diana(directory, filename, config, output, show):
 
         diana -d examples -o test.pdf -s
     """
+    # TODO: Measure and print total execution time
+    # TODO: Maybe put .ork file path in config file
     ork_file_path = filename or utility.find_latest_file(".ork", directory)
     config_file_path = config or utility.find_latest_file(".ini", directory)
     output_filename = output or "dispersion_analysis.pdf"
     results_are_shown = show
-    print("directory      : {}".format(directory))
-    print(".ork file      : {}".format(ork_file_path))
-    print("config file    : {}".format(config_file_path))
-    print("output file    : {}".format(output_filename))
-    print("output is shown: {}".format(results_are_shown))
+    print("directory   : {}".format(directory))
+    print(".ork file   : {}".format(ork_file_path))
+    print("config file : {}".format(config_file_path))
+    print("output file : {}".format(output_filename))
     config = configparser.ConfigParser()
     # TODO: Define default values for all parameters of the .ini fileata file)
     config.read(config_file_path)
     make_paths_in_config_absolute(config, config_file_path)
-    print("config sections: {}".format(config.sections()))
-    print("")
 
     # Setup of logging on stderr
     # Use logging.WARNING, or logging.DEBUG if necessary
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
     with orhelper.OpenRocketInstance() as instance:
-        idx_simulation = int(config["General"]["SimulationIndex"])
-
         orh = orhelper.Helper(instance)
-        doc = orh.load_doc(ork_file_path)
-        simulation_count = doc.getSimulationCount()
+        sim = get_simulation(
+            orh, ork_file_path, int(config["General"]["SimulationIndex"]))
+        random_parameters = set_up_random_parameters(sim, config)
 
-        if idx_simulation < 0 or idx_simulation > (simulation_count - 1):
-            raise ValueError("Wrong value of SimulationIndex!")
-        sim = doc.getSimulation(idx_simulation)
-
-        print("Load simulation number {} called {}.".format(
-            idx_simulation, sim.getName()))
-
-        rng = np.random.default_rng()
-        random_parameters = set_up_random_parameters(sim, config, rng)
-
-        landing_points = []
-        apogee_points = []
+        results = []
         n_simulations = int(config["General"]["NumberOfSimulations"])
-
         for i in range(n_simulations):
             print("Running simulation {:4} of {}".format(i + 1, n_simulations))
             randomize_simulation(sim, random_parameters)
-            landing_point, launch_point, geodetic_computation, apogee = run_simulation(
-                orh, sim, config, random_parameters)
-            landing_points.append(landing_point)
-            apogee_points.append(apogee)
+            result = run_simulation(orh, sim, config, random_parameters)
+            results.append(result)
 
-        print_stats(
-            launch_point,
-            landing_points,
-            apogee_points,
-            geodetic_computation)
+        print_statistics(results)
 
 
 def make_paths_in_config_absolute(config, config_file_path):
@@ -115,7 +93,30 @@ def make_paths_in_config_absolute(config, config_file_path):
         directory, config["WindModel"]["DataFile"])
 
 
-def set_up_random_parameters(sim, config, rng):
+def get_simulation(open_rocket_helper, ork_file_path, i_simulation):
+    """Return the simulation with the given index from the .ork file.
+
+    :arg open_rocket_helper:
+        Instance of ``orhelper.Helper()``
+
+    :raise IndexError:
+        If `i_simulation` is negative or >= the number of simulations in
+        the given .ork file
+    """
+    doc = open_rocket_helper.load_doc(ork_file_path)
+    n_simulations = doc.getSimulationCount()
+    if i_simulation < 0 or i_simulation >= n_simulations:
+        raise IndexError(
+            "Simulation index is out of bounds!\n"
+            + "i_simulation  = {}\n".format(i_simulation)
+            + "n_simulations = {}\n".format(doc.getSimulationCount()))
+    sim = doc.getSimulation(i_simulation)
+    print("Load simulation number {} called {}.".format(
+        i_simulation, sim.getName()))
+    return sim
+
+
+def set_up_random_parameters(sim, config):
     """Return a ``namedtuple`` containing all random parameters.
 
     The random parameters are actually lambdas that return a new random
@@ -126,7 +127,6 @@ def set_up_random_parameters(sim, config, rng):
     azimuth_stddev = math.radians(float(config["LaunchRail"]["Azimuth"]))
     tilt_mean = options.getLaunchRodAngle()
     tilt_stddev = math.radians(float(config["LaunchRail"]["Tilt"]))
-
     thrust_factor_stddev = float(config["Propulsion"]["ThrustFactor"])
 
     print("Initial launch rail tilt = {:6.2f}°".format(
@@ -134,6 +134,7 @@ def set_up_random_parameters(sim, config, rng):
     print("Initial launch rail azimuth   = {:6.2f}°".format(
         math.degrees(azimuth_mean)))
 
+    rng = np.random.default_rng()
     RandomParameters = collections.namedtuple("RandomParameters", [
         "tilt",
         "azimuth",
@@ -162,48 +163,25 @@ def run_simulation(orh, sim, config, random_parameters):
     """Run a single simulation and return the results.
 
     :return:
-        A 2-tuple containing the landing and launch position
+        A tuple containing (landing_point, launch_position,
+        geodetic_computation, apogee)
     """
     wind_listener = WindListener(config["WindModel"]["DataFile"])
     launch_point_listener = LaunchPointListener()
     landing_point_listener = LandingPointListener()
     motor_listener = MotorListener(
-        random_parameters.thrust_factor(), float(
-            config["Propulsion"]["NozzleDiameterMM2"]))
+        random_parameters.thrust_factor(),
+        float(config["Propulsion"]["NozzleCrossSection"]))
 
     orh.run_simulation(
-        sim,
-        listeners=(
-            launch_point_listener,
-            landing_point_listener,
-            wind_listener,
-            motor_listener))
-
-    # process results
-    events = orh.get_events(sim)
-    data = orh.get_timeseries(sim, [
-        FlightDataType.TYPE_TIME,
-        FlightDataType.TYPE_ALTITUDE,
-        FlightDataType.TYPE_LONGITUDE,
-        FlightDataType.TYPE_LATITUDE,
-    ])
-    def index_at(t): return (
-        np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
-
-    for event, times in events.items():
-        if event is FlightEvent.APOGEE:
-            for time in times:
-                apogee = orh.openrocket.util.WorldCoordinate(
-                    math.degrees(
-                        data[FlightDataType.TYPE_LATITUDE][index_at(time)]),
-                    math.degrees(
-                        data[FlightDataType.TYPE_LONGITUDE][index_at(time)]),
-                    data[FlightDataType.TYPE_ALTITUDE][index_at(time)])
-                logging.debug("Apogee at {:.1f}s: longitude {:.1f}°, latitude,{:.1f}°, altitude {:.1f}m".format(
-                    time,
-                    apogee.getLatitudeDeg(),
-                    apogee.getLongitudeDeg(),
-                    apogee.getAltitude()))
+        sim, listeners=(launch_point_listener,
+                        landing_point_listener,
+                        wind_listener,
+                        motor_listener))
+    apogee = get_apogee(orh, sim)
+    # TODO: Return results in a nicer way, using a dictionary or
+    # namedtuple for example. This makes handling afterwards easier
+    # since we don't have to know which result is at which index
     return (landing_point_listener.landing_points[0],
             launch_point_listener.launch_point,
             launch_point_listener.geodetic_computation,
@@ -211,63 +189,68 @@ def run_simulation(orh, sim, config, random_parameters):
 
 
 class LaunchPointListener(orhelper.AbstractSimulationListener):
-    """Return information at the startSimulation callback."""
+    """Return information at the ``startSimulation`` callback."""
 
     def __init__(self):
-        # FIXME: This is a weird workaround because I don't know how to
-        # create the member variables of the correct type.
         self.launch_point = None
         self.geodetic_computation = None
 
     def startSimulation(self, status):
-        """Analyze the simulation conditions of openrocket.
+        """Analyze the simulation conditions of OpenRocket.
 
-        These are the launch point and if a supported
-        geodetic model is set."""
+        These are the launch point and if a supported geodetic model is
+        set.
+
+        :raise ValueError:
+            If the geodetic computation is not flat or WGS84
+        """
         conditions = status.getSimulationConditions()
         self.launch_point = conditions.getLaunchSite()
 
         self.geodetic_computation = conditions.getGeodeticComputation()
         logging.debug(self.geodetic_computation)
-        if (self.geodetic_computation != self.geodetic_computation.FLAT and
-                self.geodetic_computation != self.geodetic_computation.WGS84):
+        computation_is_supported = (
+            self.geodetic_computation == self.geodetic_computation.FLAT
+            or self.geodetic_computation == self.geodetic_computation.WGS84)
+        if not computation_is_supported:
             raise ValueError("GeodeticComputationStrategy type not supported!")
 
 
 class LandingPointListener(orhelper.AbstractSimulationListener):
-    """Return the landing point at the endSimulation callback."""
+    """Return the landing point at the ``endSimulation`` callback."""
 
     def __init__(self):
         # FIXME: This is a weird workaround because I don't know how to
-        # create the member variables of the correct type.
+        # create the member variable of the correct type.
         self.landing_points = []
-        self.launch_points = []
 
     def endSimulation(self, status, simulation_exception):
-        """Return the landing position from openrocket."""
+        """Return the landing position from OpenRocket."""
         self.landing_points.append(status.getRocketWorldPosition())
 
 
 class MotorListener(orhelper.AbstractSimulationListener):
-    """Overrides the thrust of the motor."""
+    """Override the thrust of the motor."""
 
-    def __init__(self, thrust_factor, nozzle_area_sqmm):
+    def __init__(self, thrust_factor, nozzle_cross_section_mm2):
         self.thrust_factor = thrust_factor
         print("Used thrust factor = {:6.2f}".format(thrust_factor))
-        self.nozzle_area = nozzle_area_sqmm * 1e-6
-        print("Nozzle area = {:6.2g}mm^2".format(nozzle_area_sqmm))
+        self.nozzle_cross_section = nozzle_cross_section_mm2 * 1e-6
+        print("Nozzle cross section = {:6.2g}mm^2".format(
+            nozzle_cross_section_mm2))
         self.pressure = STANDARD_PRESSURE
 
     def postAtmosphericModel(self, status, atmospheric_conditions):
-        """Get the ambient pressure from the atmospheric model"""
+        """Get the ambient pressure from the atmospheric model."""
         self.pressure = atmospheric_conditions.getPressure()
 
     def postSimpleThrustCalculation(self, status, thrust):
-        """Returns the adapted thrust."""
+        """Return the adapted thrust."""
+        # FIXME: thrust_increase is not used appart for logging
         thrust_increase = (
-            STANDARD_PRESSURE - self.pressure) * self.nozzle_area
-        logging.debug("Thrust increase due to decreased ambient pressure = {:6.2f}N".format(
-            thrust_increase))
+            STANDARD_PRESSURE - self.pressure) * self.nozzle_cross_section
+        logging.debug("Thrust increase due to decreased ambient pressure "
+                      + "= {:6.2f}N".format(thrust_increase))
         return self.thrust_factor * thrust
 
 
@@ -277,8 +260,12 @@ class WindListener(orhelper.AbstractSimulationListener):
     def __init__(self, wind_model_file=""):
         """Read wind level model data from file.
 
-        Save them as interpolation functions to be used in other callbacks
-        of this class.
+        Save them as interpolation functions to be used in other
+        callbacks of this class.
+
+        :raise ValueError:
+            If the arrays loaded from the `wind_model_file` are of
+            unequal length
         """
         try:
             # Read wind level model data from file
@@ -294,21 +281,20 @@ class WindListener(orhelper.AbstractSimulationListener):
         wind_directions_degree = data[:, 1]
         wind_speeds_mps = data[:, 2]
 
-        logging.debug('Input wind levels model data:')
-        logging.debug('Altitude (m) ')
-        logging.debug(altitudes_m)
-        logging.debug("Direction (°) ")
-        logging.debug(wind_directions_degree)
-        logging.debug("Wind speed (m/s) ")
-        logging.debug(wind_speeds_mps)
-
-        wind_directions_rad = np.radians(wind_directions_degree)
         if (len(altitudes_m) != len(wind_directions_degree)
                 or len(altitudes_m) != len(wind_speeds_mps)):
             raise ValueError(
                 "Aloft data is incorrect! `altitudes_m`, "
                 + "`wind_directions_degree` and `wind_speeds_mps` must be "
                 + "of the same length.")
+
+        logging.debug("Input wind levels model data:")
+        logging.debug("Altitude (m) ")
+        logging.debug(altitudes_m)
+        logging.debug("Direction (°) ")
+        logging.debug(wind_directions_degree)
+        logging.debug("Wind speed (m/s) ")
+        logging.debug(wind_speeds_mps)
 
         # TODO: Which fill_values shall be used above the aloft
         # data? zero? last value? extrapolate?
@@ -317,6 +303,7 @@ class WindListener(orhelper.AbstractSimulationListener):
         self.interpolate_wind_speed_mps = scipy.interpolate.interp1d(
             altitudes_m, wind_speeds_mps, bounds_error=False,
             fill_value=(wind_speeds_mps[0], wind_speeds_mps[-1]))
+        wind_directions_rad = np.radians(wind_directions_degree)
         self.interpolate_wind_direction_rad = scipy.interpolate.interp1d(
             altitudes_m, wind_directions_rad, bounds_error=False,
             fill_value=(wind_directions_rad[0], wind_directions_rad[-1]))
@@ -325,43 +312,69 @@ class WindListener(orhelper.AbstractSimulationListener):
         """Set the wind coordinates at every simulation step."""
         if self._default_wind_model_is_used:
             return None
-        else:
-            position = status.getRocketPosition()
-            wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
-            wind_direction_rad = self.interpolate_wind_direction_rad(
-                position.z)
 
-            wind_model = status.getSimulationConditions().getWindModel()
-            wind_model.setDirection(wind_direction_rad)
-            wind_model.setAverage(wind_speed_mps)
-            status.getSimulationConditions().setWindModel(wind_model)
+        position = status.getRocketPosition()
+        wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
+        wind_direction_rad = self.interpolate_wind_direction_rad(
+            position.z)
 
-            return None
+        wind_model = status.getSimulationConditions().getWindModel()
+        wind_model.setDirection(wind_direction_rad)
+        wind_model.setAverage(wind_speed_mps)
+        status.getSimulationConditions().setWindModel(wind_model)
 
     def postWindModel(self, status, wind):
         logging.debug("Wind: {}".format(wind))
 
 
-def create_plots(results, output_filename, results_are_shown=False):
-    """Create, store and optionally show the plots of the results."""
-    raise NotImplementedError
+# TODO: Maybe we can get all the interesting simulation results in a
+# similar way. This way run_simulation() no longer needs to return the
+# results. Instead something like get_simulation_results() could be
+# implemented. This would be a nice separation of
+# concerns/responsibilities.
+def get_apogee(open_rocket_helper, simulation):
+    """Return the apogee of the simulation as ``WorldCoordinate``."""
+    FlightDataType = orhelper.FlightDataType
+    data = open_rocket_helper.get_timeseries(simulation, [
+        FlightDataType.TYPE_TIME,
+        FlightDataType.TYPE_ALTITUDE,
+        FlightDataType.TYPE_LONGITUDE,
+        FlightDataType.TYPE_LATITUDE])
+    t = np.array(data[FlightDataType.TYPE_TIME])
+    altitude = np.array(data[FlightDataType.TYPE_ALTITUDE])
+    longitude = np.array(data[FlightDataType.TYPE_LONGITUDE])
+    latitude = np.array(data[FlightDataType.TYPE_LATITUDE])
+
+    events = open_rocket_helper.get_events(simulation)
+    t_apogee = events[orhelper.FlightEvent.APOGEE][0]
+    apogee = open_rocket_helper.openrocket.util.WorldCoordinate(
+        math.degrees(latitude[t == t_apogee]),
+        math.degrees(longitude[t == t_apogee]),
+        altitude[t == t_apogee])
+    logging.debug(
+        "Apogee at {:.1f}s: ".format(t_apogee)
+        + "longitude {:.1f}°, ".format(apogee.getLatitudeDeg())
+        + "latitude,{:.1f}°, ".format(apogee.getLongitudeDeg())
+        + "altitude {:.1f}m".format(apogee.getAltitude()))
+    return apogee
 
 
-def print_stats(launch_point, landing_points,
-                apogee_points, geodetic_computation):
-    """Print statistics of all simulations."""
+def print_statistics(results):
+    """Print statistics of all simulation results."""
+    landing_points = [r[0] for r in results]
+    launch_point = results[0][1]
+    geodetic_computation = results[0][2]
+    apogees = [r[3] for r in results]
+
+    logging.debug("Results: distances in cartesian coordinates")
     distances = []
     bearings = []
-    max_altitude = []
-
-    logging.debug('Results: distances in cartesian coordinates')
     for landing_point in landing_points:
-
         if geodetic_computation == geodetic_computation.FLAT:
             distance, bearing = compute_distance_and_bearing_flat(
                 launch_point, landing_point)
         elif geodetic_computation == geodetic_computation.WGS84:
-            geodesic = pyproj.Geod(ellps='WGS84')
+            geodesic = pyproj.Geod(ellps="WGS84")
             fwd_azimuth, back_azimuth, distance = geodesic.inv(
                 launch_point.getLongitudeDeg(),
                 launch_point.getLatitudeDeg(),
@@ -372,13 +385,15 @@ def print_stats(launch_point, landing_points,
         distances.append(distance)
         bearings.append(bearing)
 
-    for apogee in apogee_points:
+    max_altitude = []
+    for apogee in apogees:
         max_altitude.append(apogee.getAltitude())
 
-    logging.debug('distances and bearings in polar coordinates')
+    logging.debug("distances and bearings in polar coordinates")
     logging.debug(distances)
     logging.debug(bearings)
 
+    print("---")
     print("Apogee: {:.1f}m ± {:.2f}m ".format(
         np.mean(max_altitude), np.std(max_altitude)))
     print(
@@ -390,18 +405,25 @@ def print_stats(launch_point, landing_points,
         len(landing_points)))
 
 
+# TODO: Find better names for start and end
 def compute_distance_and_bearing_flat(start, end):
     """Return distance and bearing betweeen two points.
 
-    valid for flat earth approximation only.
+    Valid for flat earth approximation only.
 
-    Arguments:
-    start, end --  two points of Coordinate class
+    :arg start:
+        First coordinate
+    :type start:
+        WorldCoordinate
+    :arg end:
+        Second coordinate
+    :type end:
+        WorldCoordinate
 
-    Return:
-    distance -- in m
-    bearing -- in degree
+    :return:
+        A tuple containing (distance in m, bearing in °)
     """
+    # TODO: There should already be a package to convert lon, lat to x, y
     dx = ((end.getLongitudeDeg() - start.getLongitudeDeg())
           * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
     dy = ((end.getLatitudeDeg() - start.getLatitudeDeg())
@@ -414,6 +436,11 @@ def compute_distance_and_bearing_flat(start, end):
     if bearing > math.pi:
         bearing = bearing - 2 * math.pi
     return distance, bearing
+
+
+def create_plots(results, output_filename, results_are_shown=False):
+    """Create, store and optionally show the plots of the results."""
+    raise NotImplementedError
 
 
 if __name__ == "__main__":
