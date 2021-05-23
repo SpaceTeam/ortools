@@ -3,11 +3,14 @@ import ortools.utility as utility
 import orhelper
 import numpy as np
 import matplotlib as mpl
+import matplotlib.patches
+import matplotlib.transforms
 from matplotlib import pyplot as plt
 import click
 import configparser
 import scipy.interpolate
 import pyproj
+import cycler
 
 import os
 import sys
@@ -15,6 +18,17 @@ import math
 import collections
 import logging
 
+
+plt.style.use("default")
+mpl.rcParams["figure.figsize"] = ((1920 - 160 - 30) / 5 / 25.4,
+                                  (1080 - 90 - 50) / 5 / 25.4)
+mpl.rcParams["figure.dpi"] = 254 / 2
+mpl.rcParams["axes.unicode_minus"] = True
+mpl.rcParams["axes.grid"] = True
+mpl.rcParams["axes.prop_cycle"] = cycler.cycler(
+    color=("#7570b3", "#d95f02", "#1b9e77"), linestyle=("-", "--", ":"))
+
+PLOTS_ARE_TESTED = False
 
 STANDARD_PRESSURE = 101325.0  # The standard air pressure (1.01325 bar)
 METERS_PER_DEGREE_LATITUDE = 111325.0
@@ -36,9 +50,14 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
                     "latest .ini file in `directory` is used."))
 @click.option("--output", "-o", type=click.Path(exists=False),
               help="Name of the file the output is saved to.")
+@click.option("--coordinate-type", "-ct",
+              type=click.Choice(["flat", "sphere"]),
+              default="flat", show_default=True,
+              help=("The type of coordinates used in the scatter plot of the "
+                    "landing points."))
 @click.option("--show", "-s", is_flag=True, default=False,
               help="Show the results on screen.")
-def diana(directory, filename, config, output, show):
+def diana(directory, filename, config, output, coordinate_type, show):
     """Do a dispersion analysis of an OpenRocket simulation.
 
     A dispersion analysis runs multiple simulations with slightly
@@ -69,6 +88,10 @@ def diana(directory, filename, config, output, show):
     # Use logging.WARNING, or logging.DEBUG if necessary
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
+    if PLOTS_ARE_TESTED:
+        create_plots([], output_filename, coordinate_type, results_are_shown)
+        return
+
     with orhelper.OpenRocketInstance() as instance:
         orh = orhelper.Helper(instance)
         sim = get_simulation(
@@ -84,6 +107,8 @@ def diana(directory, filename, config, output, show):
             results.append(result)
 
         print_statistics(results)
+        create_plots(results, output_filename, coordinate_type,
+                     results_are_shown)
 
 
 def make_paths_in_config_absolute(config, config_file_path):
@@ -318,10 +343,11 @@ class WindListener(orhelper.AbstractSimulationListener):
         wind_direction_rad = self.interpolate_wind_direction_rad(
             position.z)
 
-        wind_model = status.getSimulationConditions().getWindModel()
+        conditions = status.getSimulationConditions()
+        wind_model = conditions.getWindModel()
         wind_model.setDirection(wind_direction_rad)
         wind_model.setAverage(wind_speed_mps)
-        status.getSimulationConditions().setWindModel(wind_model)
+        conditions.setWindModel(wind_model)
 
     def postWindModel(self, status, wind):
         logging.debug("Wind: {}".format(wind))
@@ -405,31 +431,26 @@ def print_statistics(results):
         len(landing_points)))
 
 
-# TODO: Find better names for start and end
-def compute_distance_and_bearing_flat(start, end):
+def compute_distance_and_bearing_flat(from_, to):
     """Return distance and bearing betweeen two points.
 
     Valid for flat earth approximation only.
 
-    :arg start:
+    :arg WorldCoordinate from_:
         First coordinate
-    :type start:
-        WorldCoordinate
-    :arg end:
+    :arg WorldCoordinate to:
         Second coordinate
-    :type end:
-        WorldCoordinate
 
     :return:
         A tuple containing (distance in m, bearing in °)
     """
     # TODO: There should already be a package to convert lon, lat to x, y
-    dx = ((end.getLongitudeDeg() - start.getLongitudeDeg())
+    dx = ((to.getLongitudeDeg() - from_.getLongitudeDeg())
           * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
-    dy = ((end.getLatitudeDeg() - start.getLatitudeDeg())
+    dy = ((to.getLatitudeDeg() - from_.getLatitudeDeg())
           * METERS_PER_DEGREE_LATITUDE)
     logging.debug("Longitude {:.1f}°, Latitude {:.1f}°".format(
-        end.getLongitudeDeg(), end.getLatitudeDeg()))
+        to.getLongitudeDeg(), to.getLatitudeDeg()))
     logging.debug("dx {:.1f}m, dy {:.1f}m".format(dx, dy))
     distance = math.sqrt(dx * dx + dy * dy)
     bearing = math.pi / 2. - math.atan2(dy, dx)
@@ -438,9 +459,139 @@ def compute_distance_and_bearing_flat(start, end):
     return distance, bearing
 
 
-def create_plots(results, output_filename, results_are_shown=False):
-    """Create, store and optionally show the plots of the results."""
-    raise NotImplementedError
+# TODO: Try to refactor this ugly plotting function
+def create_plots(results, output_filename, coordinate_type="flat",
+                 results_are_shown=False):
+    """Create, store and optionally show the plots of the results.
+
+    :raise ValueError:
+        If Coordinate type is not "flat" or "sphere".
+    """
+    def to_ndarray(coordinate):
+        return np.array([coordinate.getLatitudeDeg(),
+                        coordinate.getLongitudeDeg(),
+                        coordinate.getAltitude()])
+
+    if PLOTS_ARE_TESTED:
+        # Test Data
+        rng = np.random.default_rng()
+        n_simulations = 1000
+        lat = rng.normal(55, 2, n_simulations)
+        lon = rng.normal(20, 1, n_simulations)
+        landing_points = np.array([lat, lon]).T
+        alt = rng.normal(15346, 17, n_simulations)
+        apogees = np.zeros((n_simulations, 3))
+        apogees[:, 2] = alt
+    else:
+        landing_points = np.array([to_ndarray(r[0]) for r in results])
+        launch_point = to_ndarray(results[0][1])
+        geodetic_computation = results[0][2]
+        apogees = np.array([to_ndarray(r[3]) for r in results])
+
+    colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
+    linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
+
+    fig, axs = plt.subplots(1, 2, tight_layout=True,
+                            gridspec_kw={"width_ratios": [3, 1]})
+    axs = axs.ravel()
+
+    # Scatter plot of landing coordinates
+    axs[0].set_title("Landing Points")
+    if coordinate_type == "flat":
+        x = ((landing_points[:, 1] - launch_point[1])
+             * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
+        y = ((landing_points[:, 0] - launch_point[0])
+             * METERS_PER_DEGREE_LATITUDE)
+        axs[0].set_xlabel(r"$\Delta x$ in m")
+        axs[0].set_ylabel(r"$\Delta y$ in m")
+    elif coordinate_type == "sphere":
+        x = landing_points[:, 1]
+        y = landing_points[:, 0]
+        axs[0].set_xlabel("Longitude in °")
+        axs[0].set_ylabel("Latitude in °")
+    else:
+        raise ValueError(
+            "Coordinate type {} is not supported! ".format(coordinate_type)
+            + "Valid values are 'flat' and 'sphere'.")
+    axs[0].plot(x, y, "r.", markersize=3, zorder=0)
+    confidence_ellipse(x, y, axs[0], n_std=1, label=r"$1\sigma$",
+                       edgecolor=colors[2], ls=linestyles[0])
+    confidence_ellipse(x, y, axs[0], n_std=2, label=r"$2\sigma$",
+                       edgecolor=colors[1], ls=linestyles[1])
+    confidence_ellipse(x, y, axs[0], n_std=3, label=r"$3\sigma$",
+                       edgecolor=colors[0], ls=linestyles[2])
+    axs[0].legend()
+    axs[0].ticklabel_format(useOffset=False, style="plain")
+
+    # Histogram of apogee altitudes
+    axs[1].set_title("Apogees")
+    n_simulations = apogees.shape[0]
+    n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
+    axs[1].hist(apogees[:, 2], bins=n_bins, orientation="horizontal",
+                fc=colors[2], ec="k")
+    axs[1].set_ylabel("Altitude in m")
+    axs[1].set_xlabel("Number of Simulations")
+
+    # Save and show the figure
+    plt.suptitle("Dispersion Analysis of {} Simulations".format(n_simulations))
+    plt.savefig(output_filename)
+    if results_are_shown:
+        plt.show()
+
+
+# TODO: Convert docstring style
+def confidence_ellipse(x, y, ax, n_std=3.0, facecolor="none", **kwargs):
+    """
+    Create a plot of the covariance confidence ellipse of *x* and *y*.
+
+    Parameters
+    ----------
+    x, y : array-like, shape (n, )
+        Input data.
+
+    ax : matplotlib.axes.Axes
+        The axes object to draw the ellipse into.
+
+    n_std : float
+        The number of standard deviations to determine the ellipse's radiuses.
+
+    **kwargs
+        Forwarded to `~matplotlib.patches.Ellipse`
+
+    Returns
+    -------
+    matplotlib.patches.Ellipse
+    """
+    if x.size != y.size:
+        raise ValueError("x and y must be the same size")
+
+    cov = np.cov(x, y)
+    pearson = cov[0, 1] / np.sqrt(cov[0, 0] * cov[1, 1])
+    # Using a special case to obtain the eigenvalues of this
+    # two-dimensionl dataset.
+    ell_radius_x = np.sqrt(1 + pearson)
+    ell_radius_y = np.sqrt(1 - pearson)
+    ellipse = mpl.patches.Ellipse(
+        (0, 0), width=ell_radius_x * 2, height=ell_radius_y * 2,
+        facecolor=facecolor, **kwargs)
+
+    # Calculating the stdandard deviation of x from
+    # the squareroot of the variance and multiplying
+    # with the given number of standard deviations.
+    scale_x = np.sqrt(cov[0, 0]) * n_std
+    mean_x = np.mean(x)
+
+    # calculating the stdandard deviation of y ...
+    scale_y = np.sqrt(cov[1, 1]) * n_std
+    mean_y = np.mean(y)
+
+    transf = (mpl.transforms.Affine2D().
+              rotate_deg(45).
+              scale(scale_x, scale_y).
+              translate(mean_x, mean_y))
+
+    ellipse.set_transform(transf + ax.transData)
+    return ax.add_patch(ellipse)
 
 
 if __name__ == "__main__":
