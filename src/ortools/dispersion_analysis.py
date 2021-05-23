@@ -15,8 +15,9 @@ import cycler
 import os
 import sys
 import math
-import collections
+import time
 import logging
+import collections
 
 
 plt.style.use("default")
@@ -71,6 +72,7 @@ def diana(directory, filename, config, output, coordinate_type, show):
     """
     # TODO: Measure and print total execution time
     # TODO: Maybe put .ork file path in config file
+    t0 = time.time()
     ork_file_path = filename or utility.find_latest_file(".ork", directory)
     config_file_path = config or utility.find_latest_file(".ini", directory)
     output_filename = output or "dispersion_analysis.pdf"
@@ -93,6 +95,7 @@ def diana(directory, filename, config, output, coordinate_type, show):
         return
 
     with orhelper.OpenRocketInstance() as instance:
+        t1 = time.time()
         orh = orhelper.Helper(instance)
         sim = get_simulation(
             orh, ork_file_path, int(config["General"]["SimulationIndex"]))
@@ -106,7 +109,13 @@ def diana(directory, filename, config, output, coordinate_type, show):
             result = run_simulation(orh, sim, config, random_parameters)
             results.append(result)
 
+        t2 = time.time()
         print_statistics(results)
+        t3 = time.time()
+        print("---")
+        print("time for {} simulations = {:.1f}s".format(n_simulations,
+                                                         t2 - t1))
+        print("total execution time = {:.1f}s".format(t3 - t0))
         create_plots(results, output_filename, coordinate_type,
                      results_are_shown)
 
