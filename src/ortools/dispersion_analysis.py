@@ -507,22 +507,41 @@ def create_plots(results, output_filename, coordinate_type="flat",
     # Scatter plot of landing coordinates
     axs[0].set_title("Landing Points")
     if coordinate_type == "flat":
-        x = ((landing_points[:, 1] - launch_point[1])
-             * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
-        y = ((landing_points[:, 0] - launch_point[0])
-             * METERS_PER_DEGREE_LATITUDE)
+        if geodetic_computation == geodetic_computation.WGS84:
+            # OR simulated with WGS84 -> use flat projection
+            logging.info("Use WGS84-to-flatearth projection")
+            crs_wgs = pyproj.CRS("epsg:4326")
+            x0 = 0
+            y0 = 0
+            cust = pyproj.Proj(
+                "+proj=aeqd +lat_0={0} +lon_0={1} +datum=WGS84 +units=m".format(
+                    launch_point[0], launch_point[1]))
+            x, y = pyproj.transform(
+                crs_wgs, cust, landing_points[:, 0], landing_points[:, 1])
+        else:
+            # OR simulated with FLAT coordinates -> take them directly
+            x = ((landing_points[:, 1] - launch_point[1])
+                 * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
+            y = ((landing_points[:, 0] - launch_point[0])
+                 * METERS_PER_DEGREE_LATITUDE)
+            x0 = 0
+            y0 = 0
         axs[0].set_xlabel(r"$\Delta x$ in m")
         axs[0].set_ylabel(r"$\Delta y$ in m")
     elif coordinate_type == "sphere":
         x = landing_points[:, 1]
         y = landing_points[:, 0]
+        x0 = launch_point[1]
+        y0 = launch_point[0]
         axs[0].set_xlabel("Longitude in °")
         axs[0].set_ylabel("Latitude in °")
     else:
         raise ValueError(
             "Coordinate type {} is not supported! ".format(coordinate_type)
             + "Valid values are 'flat' and 'sphere'.")
-    axs[0].plot(x, y, "r.", markersize=3, zorder=0)
+    axs[0].plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
+    axs[0].plot(x, y, "r.", markersize=3, zorder=0, label="Landing")
+    axs[0].axis("square")
     confidence_ellipse(x, y, axs[0], n_std=1, label=r"$1\sigma$",
                        edgecolor=colors[2], ls=linestyles[0])
     confidence_ellipse(x, y, axs[0], n_std=2, label=r"$2\sigma$",
