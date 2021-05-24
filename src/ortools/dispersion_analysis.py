@@ -99,13 +99,19 @@ def diana(directory, filename, config, output, coordinate_type, show):
         orh = orhelper.Helper(instance)
         sim = get_simulation(
             orh, ork_file_path, int(config["General"]["SimulationIndex"]))
-        random_parameters = set_up_random_parameters(sim, config)
+        rocket_components, original_parameters, random_parameters = set_up_random_parameters(
+            orh, sim, config)
 
         results = []
         n_simulations = int(config["General"]["NumberOfSimulations"])
         for i in range(n_simulations):
-            print("Running simulation {:4} of {}".format(i + 1, n_simulations))
-            randomize_simulation(sim, random_parameters)
+            print(
+                "-- Running simulation {:4} of {}--".format(i + 1, n_simulations))
+            if i > 0:
+                randomize_simulation(
+                    orh, sim, rocket_components, original_parameters, random_parameters)
+            else:
+                print("with nominal parameterset but wind-model")
             result = run_simulation(orh, sim, config, random_parameters)
             results.append(result)
 
@@ -150,8 +156,10 @@ def get_simulation(open_rocket_helper, ork_file_path, i_simulation):
     return sim
 
 
-def set_up_random_parameters(sim, config):
-    """Return a ``namedtuple`` containing all random parameters.
+def set_up_random_parameters(orh, sim, config):
+    """Return iterable components, original values, and random parameters
+
+    a ``namedtuple`` containing all random parameters.
 
     The random parameters are actually lambdas that return a new random
     sample when called.
@@ -162,35 +170,167 @@ def set_up_random_parameters(sim, config):
     tilt_mean = options.getLaunchRodAngle()
     tilt_stddev = math.radians(float(config["LaunchRail"]["Tilt"]))
     thrust_factor_stddev = float(config["Propulsion"]["ThrustFactor"])
+    fincant_stddev = float(config["Aerodynamics"]["FinCant"])
+    parachute_cd_stddev = float(config["Aerodynamics"]["ParachuteCd"])
+    roughness_stddev = float(config["Aerodynamics"]["Roghness"])
+
+    # get rocket data
+    opts = sim.getOptions()
+    rocket = opts.getRocket()
+
+    components_fin_sets = []
+    components_parachutes = []
+    components_external_components = []
+    original_fin_cant = []
+    original_parachute_cd = []
+    original_roughness = []
+    print("Rocket has {} stage(s).".format(rocket.getStageCount()))
+    for component in orhelper.JIterator(rocket):
+        logging.debug("Name", component.getName(), "of type", component.__class__.__name__)
+        # fins can be
+        #   orh.openrocket.rocketcomponent.FreeformFinSet
+        #   orh.openrocket.rocketcomponent.TrapezoidFinSet
+        #   orh.openrocket.rocketcomponent.EllipticalFinSet
+        if (isinstance(component, orh.openrocket.rocketcomponent.FinSet)):
+            print(
+                "Finset(",
+                component.getName(),
+                ") with cant angle {:6.2f}rad".format(
+                    component.getCantAngle()))
+            components_fin_sets.append(component)
+            original_fin_cant.append(component.getCantAngle())
+        if isinstance(component, orh.openrocket.rocketcomponent.Parachute):
+            print(
+                "Parachute with drag surface diameter{:6.2f}m and CD of {:6.2f}".format(
+                    component.getDiameter(),
+                    component.getCD()))
+            components_parachutes.append(component)
+            original_parachute_cd.append(component.getCD())
+        if isinstance(component,
+                      orh.openrocket.rocketcomponent.ExternalComponent):
+            print(
+                "External component",
+                component,
+                " with finish ",
+                component.getFinish())
+            components_external_components.append(component)
+            original_roughness.append(component.getFinish().getRoughnessSize())
 
     print("Initial launch rail tilt = {:6.2f}°".format(
         math.degrees(tilt_mean)))
     print("Initial launch rail azimuth   = {:6.2f}°".format(
         math.degrees(azimuth_mean)))
 
+    RocketComponents = collections.namedtuple("RocketComponents", [
+        "fin_sets",
+        "parachutes",
+        "external_components"])
+    OriginalParameters = collections.namedtuple("OriginalParameters", [
+        "fin_cant",
+        "parachute_cd",
+        "roughness"])
     rng = np.random.default_rng()
     RandomParameters = collections.namedtuple("RandomParameters", [
         "tilt",
         "azimuth",
-        "thrust_factor"])
-    return RandomParameters(
+        "thrust_factor",
+        "fin_cant",
+        "parachute_cd",
+        "roughness"])
+    return RocketComponents(
+        fin_sets=components_fin_sets, parachutes=components_parachutes, external_components=components_external_components), OriginalParameters(
+        fin_cant=original_fin_cant, parachute_cd=original_parachute_cd, roughness=original_roughness), RandomParameters(
         tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
         azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
-        thrust_factor=lambda: rng.normal(1, thrust_factor_stddev))
+        thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
+        fin_cant=lambda: rng.normal(0, fincant_stddev),
+        parachute_cd=lambda: rng.normal(0, parachute_cd_stddev),
+        roughness=lambda: rng.normal(0, roughness_stddev))
 
 
-def randomize_simulation(sim, random_parameters):
+def randomize_simulation(open_rocket_helper, sim,
+                         rocket_components, original_parameters, random_parameters):
     """Set simulation parameters to random samples."""
+    print("Randomize variables..")
     options = sim.getOptions()
     options.setLaunchRodAngle(random_parameters.tilt())
     # Otherwise launch rod direction cannot be altered
     options.setLaunchIntoWind(False)
     options.setLaunchRodDirection(random_parameters.azimuth())
-
     tilt = math.degrees(options.getLaunchRodAngle())
     azimuth = math.degrees(options.getLaunchRodDirection())
-    print("Used launch rail tilt = {:6.2f}°".format(tilt))
-    print("Used launch rail azimuth   = {:6.2f}°".format(azimuth))
+    print("Launch rail tilt = {:6.2f}°".format(tilt))
+    print("Launch rail azimuth   = {:6.2f}°".format(azimuth))
+
+    # there can be more than one finset -> add unbiased normaldistributed value
+    ct = 0
+    print("Finset: ")
+    for fins in rocket_components.fin_sets:
+        fins.setCantAngle(
+            original_parameters.fin_cant[ct] +
+            random_parameters.fin_cant())
+        print(
+            fins.getName(),
+            " with cant angle {:6.2f}°".format(
+                fins.getCantAngle()))
+        ct = ct + 1
+
+    # there can be more than one parachute -> add unbiased normaldistributed
+    # value
+    ct = 0
+    print("Parachutes: ")
+    for parachute in rocket_components.parachutes:
+        parachute.setCD(
+            max(original_parameters.parachute_cd[ct] + random_parameters.parachute_cd(), 0.))
+        print(parachute.getName(),
+              "with CD {:6.2f}".format(
+            parachute.getCD()))
+        ct = ct + 1
+
+    # TODO: how can one change the finish roughness with arbitrary values?
+    # the Finish(string, double) constructor is private:
+    # https://github.com/openrocket/openrocket/blob/unstable/core/src/net/sf/openrocket/rocketcomponent/ExternalComponent.java#L38-L41
+    # http://tutorials.jenkov.com/java/enums.html#enum-fields
+    # workaround with randomized variable put into bins and using predefined enums
+    # //// Rough
+    # ROUGH("ExternalComponent.Rough", 500e-6),
+    # //// Unfinished
+    # UNFINISHED("ExternalComponent.Unfinished", 150e-6),
+    # //// Regular paint
+    # NORMAL("ExternalComponent.Regularpaint", 60e-6),
+    # //// Smooth paint
+    # SMOOTH("ExternalComponent.Smoothpaint", 20e-6),
+    # //// Polished
+    # POLISHED("ExternalComponent.Polished", 2e-6);
+    roughness_values = np.array([500e-6, 150e-6, 60e-6, 20e-6, 2e-6])
+    # calculate bin edges, average between adjacent roughness_values
+    roughness_bins = (roughness_values[1:] + roughness_values[:-1]) / 2.
+    logging.debug("bins {}".format(roughness_bins))
+    ct = 0
+    print("External components: ")
+    for ext_comp in rocket_components.external_components:
+        roughness_random = original_parameters.roughness[ct] + \
+            random_parameters.roughness()
+        roughness_in_bin = np.digitize(roughness_random, roughness_bins)
+        logging.debug(
+            "roughness {} is in bin {}, i.e. {}".format(
+                roughness_random,
+                roughness_in_bin,
+                roughness_values[roughness_in_bin]))
+        if roughness_in_bin == 0:
+            ext_comp.setFinish(ext_comp.Finish.ROUGH)
+        elif roughness_in_bin == 1:
+            ext_comp.setFinish(ext_comp.Finish.UNFINISHED)
+        elif roughness_in_bin == 2:
+            ext_comp.setFinish(ext_comp.Finish.NORMAL)
+        elif roughness_in_bin == 3:
+            ext_comp.setFinish(ext_comp.Finish.SMOOTH)
+        elif roughness_in_bin == 4:
+            ext_comp.setFinish(ext_comp.Finish.POLISHED)
+        print(ext_comp,
+              " with finish ",
+              ext_comp.getFinish())
+        ct = ct + 1
 
 
 def run_simulation(orh, sim, config, random_parameters):
@@ -270,7 +410,7 @@ class MotorListener(orhelper.AbstractSimulationListener):
         self.thrust_factor = thrust_factor
         print("Used thrust factor = {:6.2f}".format(thrust_factor))
         self.nozzle_cross_section = nozzle_cross_section_mm2 * 1e-6
-        print("Nozzle cross section = {:6.2g}mm^2".format(
+        logging.info("Nozzle cross section = {:6.2g}mm^2".format(
             nozzle_cross_section_mm2))
         self.pressure = STANDARD_PRESSURE
 
@@ -280,12 +420,13 @@ class MotorListener(orhelper.AbstractSimulationListener):
 
     def postSimpleThrustCalculation(self, status, thrust):
         """Return the adapted thrust."""
-        # FIXME: thrust_increase is not used appart for logging
         thrust_increase = (
             STANDARD_PRESSURE - self.pressure) * self.nozzle_cross_section
         logging.debug("Thrust increase due to decreased ambient pressure "
                       + "= {:6.2f}N".format(thrust_increase))
         return self.thrust_factor * thrust
+        # return self.thrust_factor * thrust + thrust_increase # not stable?
+        # wrong unit or data format?
 
 
 class WindListener(orhelper.AbstractSimulationListener):
