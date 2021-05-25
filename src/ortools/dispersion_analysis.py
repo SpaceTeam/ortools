@@ -4,6 +4,7 @@ import orhelper
 import numpy as np
 import matplotlib as mpl
 import matplotlib.patches
+import matplotlib.gridspec
 import matplotlib.transforms
 from matplotlib import pyplot as plt
 import click
@@ -30,6 +31,7 @@ mpl.rcParams["axes.grid"] = True
 # Source: https://colorbrewer2.org/#type=qualitative&scheme=Dark2&n=3
 mpl.rcParams["axes.prop_cycle"] = cycler.cycler(
     color=("#7570b3", "#d95f02", "#1b9e77"), linestyle=("-", "--", ":"))
+line_color_map = mpl.cm.gist_rainbow
 
 PLOTS_ARE_TESTED = False
 
@@ -116,7 +118,6 @@ def diana(directory, filename, config, output, coordinate_type, show):
                 print("with nominal parameter set but wind-model")
             result = run_simulation(orh, sim, config, random_parameters)
             results.append(result)
-
         t2 = time.time()
         print_statistics(results)
         t3 = time.time()
@@ -346,7 +347,7 @@ def run_simulation(orh, sim, config, random_parameters):
 
     :return:
         A tuple containing (landing_point, launch_position,
-        geodetic_computation, apogee)
+        geodetic_computation, apogee, trajectory)
     """
     wind_listener = WindListener(config["WindModel"]["DataFile"])
     launch_point_listener = LaunchPointListener()
@@ -361,13 +362,15 @@ def run_simulation(orh, sim, config, random_parameters):
                         wind_listener,
                         motor_listener))
     apogee = get_apogee(orh, sim)
+    trajectory = get_trajectory(orh, sim)
     # TODO: Return results in a nicer way, using a dictionary or
     # namedtuple for example. This makes handling afterwards easier
     # since we don't have to know which result is at which index
     return (landing_point_listener.landing_points[0],
             launch_point_listener.launch_point,
             launch_point_listener.geodetic_computation,
-            apogee)
+            apogee,
+            trajectory)
 
 
 class LaunchPointListener(orhelper.AbstractSimulationListener):
@@ -543,6 +546,27 @@ def get_apogee(open_rocket_helper, simulation):
     return apogee
 
 
+# TODO: Return x, y or lat, lon depending on `coordinate_type`
+# TODO: I guess we should also directly use these x, y values for things
+# like apogee, landing points, launch point, etc.
+def get_trajectory(open_rocket_helper, simulation):
+    """Return the x, y and altitude values of the rocket.
+
+    :return:
+        List of 3 arrays containing the values for x, y and altitude at
+        each simulation step
+    """
+    FlightDataType = orhelper.FlightDataType
+    data = open_rocket_helper.get_timeseries(simulation, [
+        FlightDataType.TYPE_POSITION_X,
+        FlightDataType.TYPE_POSITION_Y,
+        FlightDataType.TYPE_ALTITUDE])
+    x = np.array(data[FlightDataType.TYPE_POSITION_X])
+    y = np.array(data[FlightDataType.TYPE_POSITION_Y])
+    altitude = np.array(data[FlightDataType.TYPE_ALTITUDE])
+    return [x, y, altitude]
+
+
 def print_statistics(results):
     """Print statistics of all simulation results."""
     landing_points = [r[0] for r in results]
@@ -645,12 +669,22 @@ def create_plots(results, output_filename, coordinate_type="flat",
         launch_point = to_array(results[0][1])
         geodetic_computation = results[0][2]
         apogees = np.array([to_array(r[3]) for r in results])
+        trajectories = [r[4] for r in results]
 
-    fig, axs = plt.subplots(1, 2, tight_layout=True)
-    axs = axs.ravel()
+    # fig, axs = plt.subplots(1, 3, tight_layout=True,
+    #                         gridspec_kw={"width_ratios": [2, 2, 1]})
+    fig = plt.figure(constrained_layout=True)
+    spec = mpl.gridspec.GridSpec(nrows=2, ncols=2, figure=fig,
+                                 width_ratios=[1.5, 1],
+                                 height_ratios=[3.5, 1],
+                                 right=0.8)
+    ax_trajectories = fig.add_subplot(spec[:, 0], projection='3d')
+    ax_landing_points = fig.add_subplot(spec[0, 1])
+    ax_apogees = fig.add_subplot(spec[1, 1])
 
     # Scatter plot of landing coordinates
-    axs[0].set_title("Landing Points")
+    ax_lps = ax_landing_points
+    ax_lps.set_title("Landing Points")
     if coordinate_type == "flat":
         if geodetic_computation == geodetic_computation.WGS84:
             # OR simulated with WGS84 -> use flat projection
@@ -669,44 +703,57 @@ def create_plots(results, output_filename, coordinate_type="flat",
                  * METERS_PER_DEGREE_LATITUDE)
         x0 = 0
         y0 = 0
-        axs[0].set_xlabel(r"$\Delta x$ in m")
-        axs[0].set_ylabel(r"$\Delta y$ in m")
+        ax_lps.set_xlabel(r"$\Delta x$ in m")
+        ax_lps.set_ylabel(r"$\Delta y$ in m")
     elif coordinate_type == "sphere":
         x = landing_points[:, 1]
         y = landing_points[:, 0]
         x0 = launch_point[1]
         y0 = launch_point[0]
-        axs[0].set_xlabel("Longitude in °")
-        axs[0].set_ylabel("Latitude in °")
+        ax_lps.set_xlabel("Longitude in °")
+        ax_lps.set_ylabel("Latitude in °")
     else:
         raise ValueError(
             "Coordinate type {} is not supported! ".format(coordinate_type)
             + "Valid values are 'flat' and 'sphere'.")
-    axs[0].plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
-    axs[0].plot(x, y, "r.", markersize=3, zorder=1, label="Landing")
-    axs[0].axis("square")
+    ax_lps.plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
+    ax_lps.plot(x, y, "r.", markersize=3, zorder=1, label="Landing")
+    ax_lps.axis("square")
     colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
     linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
-    confidence_ellipse(x, y, axs[0], n_std=1, label=r"$1\sigma$",
+    confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
                        edgecolor=colors[2], ls=linestyles[0])
-    confidence_ellipse(x, y, axs[0], n_std=2, label=r"$2\sigma$",
+    confidence_ellipse(x, y, ax_lps, n_std=2, label=r"$2\sigma$",
                        edgecolor=colors[1], ls=linestyles[1])
-    confidence_ellipse(x, y, axs[0], n_std=3, label=r"$3\sigma$",
+    confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
                        edgecolor=colors[0], ls=linestyles[2])
-    axs[0].legend()
-    axs[0].ticklabel_format(useOffset=False, style="plain")
+    ax_lps.legend()
+    ax_lps.ticklabel_format(useOffset=False, style="plain")
 
     # Histogram of apogee altitudes
-    axs[1].set_title("Apogees")
+    ax_apogees.set_title("Apogees")
     n_simulations = apogees.shape[0]
     n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
-    axs[1].hist(apogees[:, 2], bins=n_bins, orientation="horizontal",
-                fc=colors[2], ec="k")
-    axs[1].set_ylabel("Altitude in m")
-    axs[1].set_xlabel("Number of Simulations")
+    ax_apogees.hist(apogees[:, 2], bins=n_bins, orientation="vertical",
+                    fc=colors[2], ec="k")
+    ax_apogees.set_ylabel("Altitude in m")
+    ax_apogees.set_xlabel("Number of Simulations")
+
+    # Plot the trajectories
+    ax_trajectories.set_title("Trajectories")
+    colors = line_color_map(np.linspace(0, 1, len(trajectories)))
+    for trajectory, color in zip(trajectories, colors):
+        x, y, alt = trajectory
+        ax_trajectories.plot(xs=x, ys=y, zs=alt, color=color, linestyle="-")
+    ax_trajectories.ticklabel_format(useOffset=False, style="plain")
+    # TODO: Set x and y limits equal to that of the landing points plot,
+    ax_trajectories.set_xlabel("x in m")
+    ax_trajectories.set_ylabel("y in m")
+    ax_trajectories.set_zlabel("altitude in m")
 
     # Save and show the figure
     plt.suptitle("Dispersion Analysis of {} Simulations".format(n_simulations))
+    # plt.tight_layout()
     plt.savefig(output_filename)
     if results_are_shown:
         plt.show()
