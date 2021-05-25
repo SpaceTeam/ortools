@@ -26,6 +26,8 @@ mpl.rcParams["figure.figsize"] = ((1920 - 160 - 30) / 5 / 25.4,
 mpl.rcParams["figure.dpi"] = 254 / 2
 mpl.rcParams["axes.unicode_minus"] = True
 mpl.rcParams["axes.grid"] = True
+# Print friendly, colorblind safe colors for qualitative data
+# Source: https://colorbrewer2.org/#type=qualitative&scheme=Dark2&n=3
 mpl.rcParams["axes.prop_cycle"] = cycler.cycler(
     color=("#7570b3", "#d95f02", "#1b9e77"), linestyle=("-", "--", ":"))
 
@@ -97,21 +99,21 @@ def diana(directory, filename, config, output, coordinate_type, show):
     with orhelper.OpenRocketInstance() as instance:
         t1 = time.time()
         orh = orhelper.Helper(instance)
-        sim = get_simulation(
-            orh, ork_file_path, int(config["General"]["SimulationIndex"]))
-        rocket_components, original_parameters, random_parameters = set_up_random_parameters(
-            orh, sim, config)
+        i_simulation = int(config["General"]["SimulationIndex"])
+        sim = get_simulation(orh, ork_file_path, i_simulation)
+        rocket_components, original_parameters, random_parameters = \
+            set_up_random_parameters(orh, sim, config)
 
         results = []
         n_simulations = int(config["General"]["NumberOfSimulations"])
         for i in range(n_simulations):
-            print(
-                "-- Running simulation {:4} of {}--".format(i + 1, n_simulations))
+            print("-- Running simulation {:4} of {} --".format(
+                i + 1, n_simulations))
             if i > 0:
-                randomize_simulation(
-                    orh, sim, rocket_components, original_parameters, random_parameters)
+                randomize_simulation(orh, sim, rocket_components,
+                                     original_parameters, random_parameters)
             else:
-                print("with nominal parameterset but wind-model")
+                print("with nominal parameter set but wind-model")
             result = run_simulation(orh, sim, config, random_parameters)
             results.append(result)
 
@@ -157,9 +159,7 @@ def get_simulation(open_rocket_helper, ork_file_path, i_simulation):
 
 
 def set_up_random_parameters(orh, sim, config):
-    """Return iterable components, original values, and random parameters
-
-    a ``namedtuple`` containing all random parameters.
+    """Return iterable components, original values, random parameters.
 
     The random parameters are actually lambdas that return a new random
     sample when called.
@@ -178,47 +178,48 @@ def set_up_random_parameters(orh, sim, config):
     opts = sim.getOptions()
     rocket = opts.getRocket()
 
+    # TODO: Move the components into its own function get_components()
+    # or something. It makes no sense for this to be here.
     components_fin_sets = []
     components_parachutes = []
     components_external_components = []
+    # TODO: Remove these original values. They should be set as the mean
+    # of the normal distribution. If there are multiple fin_cants, etc.
+    # just make that part of the RandomParameters a list.
     original_fin_cant = []
     original_parachute_cd = []
     original_roughness = []
     print("Rocket has {} stage(s).".format(rocket.getStageCount()))
     for component in orhelper.JIterator(rocket):
-        logging.debug("Name", component.getName(), "of type", component.__class__.__name__)
+        # TODO: This looks like a weird hack. Try type(component).
+        logging.debug("Component {} of type {}".format(
+            component.getName(), component.__class__.__name__))
         # fins can be
         #   orh.openrocket.rocketcomponent.FreeformFinSet
         #   orh.openrocket.rocketcomponent.TrapezoidFinSet
         #   orh.openrocket.rocketcomponent.EllipticalFinSet
         if (isinstance(component, orh.openrocket.rocketcomponent.FinSet)):
-            print(
-                "Finset(",
-                component.getName(),
-                ") with cant angle {:6.2f}rad".format(
-                    component.getCantAngle()))
+            # FIXME: Is it rad or °? In randomize_simulation() it is °.
+            print("Finset({}) with ".format(component.getName())
+                  + "cant angle {:6.2f}rad".format(component.getCantAngle()))
             components_fin_sets.append(component)
             original_fin_cant.append(component.getCantAngle())
         if isinstance(component, orh.openrocket.rocketcomponent.Parachute):
-            print(
-                "Parachute with drag surface diameter{:6.2f}m and CD of {:6.2f}".format(
-                    component.getDiameter(),
-                    component.getCD()))
+            print("Parachute with drag surface diameter "
+                  + "{:6.2f}m and ".format(component.getDiameter())
+                  + "CD of {:6.2f}".format(component.getCD()))
             components_parachutes.append(component)
             original_parachute_cd.append(component.getCD())
         if isinstance(component,
                       orh.openrocket.rocketcomponent.ExternalComponent):
-            print(
-                "External component",
-                component,
-                " with finish ",
-                component.getFinish())
+            print("External component {} with finish {}".format(
+                component, component.getFinish()))
             components_external_components.append(component)
             original_roughness.append(component.getFinish().getRoughnessSize())
 
-    print("Initial launch rail tilt = {:6.2f}°".format(
+    print("Initial launch rail tilt    = {:6.2f}°".format(
         math.degrees(tilt_mean)))
-    print("Initial launch rail azimuth   = {:6.2f}°".format(
+    print("Initial launch rail azimuth = {:6.2f}°".format(
         math.degrees(azimuth_mean)))
 
     RocketComponents = collections.namedtuple("RocketComponents", [
@@ -237,21 +238,28 @@ def set_up_random_parameters(orh, sim, config):
         "fin_cant",
         "parachute_cd",
         "roughness"])
-    return RocketComponents(
-        fin_sets=components_fin_sets, parachutes=components_parachutes, external_components=components_external_components), OriginalParameters(
-        fin_cant=original_fin_cant, parachute_cd=original_parachute_cd, roughness=original_roughness), RandomParameters(
-        tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
-        azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
-        thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
-        fin_cant=lambda: rng.normal(0, fincant_stddev),
-        parachute_cd=lambda: rng.normal(0, parachute_cd_stddev),
-        roughness=lambda: rng.normal(0, roughness_stddev))
+    return (
+        RocketComponents(
+            fin_sets=components_fin_sets,
+            parachutes=components_parachutes,
+            external_components=components_external_components),
+        OriginalParameters(
+            fin_cant=original_fin_cant,
+            parachute_cd=original_parachute_cd,
+            roughness=original_roughness),
+        RandomParameters(
+            tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
+            azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
+            thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
+            fin_cant=lambda: rng.normal(0, fincant_stddev),
+            parachute_cd=lambda: rng.normal(0, parachute_cd_stddev),
+            roughness=lambda: rng.normal(0, roughness_stddev)))
 
 
-def randomize_simulation(open_rocket_helper, sim,
-                         rocket_components, original_parameters, random_parameters):
+def randomize_simulation(open_rocket_helper, sim, rocket_components,
+                         original_parameters, random_parameters):
     """Set simulation parameters to random samples."""
-    print("Randomize variables..")
+    print("Randomize variables...")
     options = sim.getOptions()
     options.setLaunchRodAngle(random_parameters.tilt())
     # Otherwise launch rod direction cannot be altered
@@ -259,39 +267,39 @@ def randomize_simulation(open_rocket_helper, sim,
     options.setLaunchRodDirection(random_parameters.azimuth())
     tilt = math.degrees(options.getLaunchRodAngle())
     azimuth = math.degrees(options.getLaunchRodDirection())
-    print("Launch rail tilt = {:6.2f}°".format(tilt))
-    print("Launch rail azimuth   = {:6.2f}°".format(azimuth))
+    print("Launch rail tilt    = {:6.2f}°".format(tilt))
+    print("Launch rail azimuth = {:6.2f}°".format(azimuth))
 
-    # there can be more than one finset -> add unbiased normaldistributed value
+    # There can be more than one finset -> add unbiased
+    # normaldistributed value
     ct = 0
     print("Finset: ")
     for fins in rocket_components.fin_sets:
-        fins.setCantAngle(
-            original_parameters.fin_cant[ct] +
-            random_parameters.fin_cant())
-        print(
-            fins.getName(),
-            " with cant angle {:6.2f}°".format(
-                fins.getCantAngle()))
-        ct = ct + 1
+        fins.setCantAngle(original_parameters.fin_cant[ct]
+                          + random_parameters.fin_cant())
+        # FIXME: Is it rad or °? In set_up_random_parameters() it is rad.
+        print("{} with cant angle {:6.2f}°".format(fins.getName(),
+                                                   fins.getCantAngle()))
+        ct += 1
 
-    # there can be more than one parachute -> add unbiased normaldistributed
-    # value
+    # There can be more than one parachute -> add unbiased
+    # normaldistributed value
     ct = 0
     print("Parachutes: ")
     for parachute in rocket_components.parachutes:
-        parachute.setCD(
-            max(original_parameters.parachute_cd[ct] + random_parameters.parachute_cd(), 0.))
+        parachute.setCD(max(original_parameters.parachute_cd[ct]
+                            + random_parameters.parachute_cd(), 0.))
         print(parachute.getName(),
               "with CD {:6.2f}".format(
             parachute.getCD()))
-        ct = ct + 1
+        ct += 1
 
-    # TODO: how can one change the finish roughness with arbitrary values?
-    # the Finish(string, double) constructor is private:
+    # TODO: How can one change the finish roughness with arbitrary
+    # values? the Finish(string, double) constructor is private:
     # https://github.com/openrocket/openrocket/blob/unstable/core/src/net/sf/openrocket/rocketcomponent/ExternalComponent.java#L38-L41
     # http://tutorials.jenkov.com/java/enums.html#enum-fields
-    # workaround with randomized variable put into bins and using predefined enums
+    # Workaround with randomized variable put into bins and using
+    # predefined enums
     # //// Rough
     # ROUGH("ExternalComponent.Rough", 500e-6),
     # //// Unfinished
@@ -303,7 +311,7 @@ def randomize_simulation(open_rocket_helper, sim,
     # //// Polished
     # POLISHED("ExternalComponent.Polished", 2e-6);
     roughness_values = np.array([500e-6, 150e-6, 60e-6, 20e-6, 2e-6])
-    # calculate bin edges, average between adjacent roughness_values
+    # Calculate bin edges, average between adjacent roughness_values
     roughness_bins = (roughness_values[1:] + roughness_values[:-1]) / 2.
     logging.debug("bins {}".format(roughness_bins))
     ct = 0
@@ -330,7 +338,7 @@ def randomize_simulation(open_rocket_helper, sim,
         print(ext_comp,
               " with finish ",
               ext_comp.getFinish())
-        ct = ct + 1
+        ct += 1
 
 
 def run_simulation(orh, sim, config, random_parameters):
@@ -617,7 +625,7 @@ def create_plots(results, output_filename, coordinate_type="flat",
     :raise ValueError:
         If Coordinate type is not "flat" or "sphere".
     """
-    def to_ndarray(coordinate):
+    def to_array(coordinate):
         return np.array([coordinate.getLatitudeDeg(),
                         coordinate.getLongitudeDeg(),
                         coordinate.getAltitude()])
@@ -633,16 +641,12 @@ def create_plots(results, output_filename, coordinate_type="flat",
         apogees = np.zeros((n_simulations, 3))
         apogees[:, 2] = alt
     else:
-        landing_points = np.array([to_ndarray(r[0]) for r in results])
-        launch_point = to_ndarray(results[0][1])
+        landing_points = np.array([to_array(r[0]) for r in results])
+        launch_point = to_array(results[0][1])
         geodetic_computation = results[0][2]
-        apogees = np.array([to_ndarray(r[3]) for r in results])
+        apogees = np.array([to_array(r[3]) for r in results])
 
-    colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
-    linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
-
-    fig, axs = plt.subplots(1, 2, tight_layout=True,
-                            gridspec_kw={"width_ratios": [3, 1]})
+    fig, axs = plt.subplots(1, 2, tight_layout=True)
     axs = axs.ravel()
 
     # Scatter plot of landing coordinates
@@ -652,11 +656,9 @@ def create_plots(results, output_filename, coordinate_type="flat",
             # OR simulated with WGS84 -> use flat projection
             logging.info("Use WGS84-to-flatearth projection")
             crs_wgs = pyproj.CRS("epsg:4326")
-            x0 = 0
-            y0 = 0
             cust = pyproj.Proj(
-                "+proj=aeqd +lat_0={0} +lon_0={1} +datum=WGS84 +units=m".format(
-                    launch_point[0], launch_point[1]))
+                "+proj=aeqd +lat_0={} ".format(launch_point[0])
+                + "+lon_0={} +datum=WGS84 +units=m".format(launch_point[1]))
             x, y = pyproj.transform(
                 crs_wgs, cust, landing_points[:, 0], landing_points[:, 1])
         else:
@@ -665,8 +667,8 @@ def create_plots(results, output_filename, coordinate_type="flat",
                  * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
             y = ((landing_points[:, 0] - launch_point[0])
                  * METERS_PER_DEGREE_LATITUDE)
-            x0 = 0
-            y0 = 0
+        x0 = 0
+        y0 = 0
         axs[0].set_xlabel(r"$\Delta x$ in m")
         axs[0].set_ylabel(r"$\Delta y$ in m")
     elif coordinate_type == "sphere":
@@ -681,8 +683,10 @@ def create_plots(results, output_filename, coordinate_type="flat",
             "Coordinate type {} is not supported! ".format(coordinate_type)
             + "Valid values are 'flat' and 'sphere'.")
     axs[0].plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
-    axs[0].plot(x, y, "r.", markersize=3, zorder=0, label="Landing")
+    axs[0].plot(x, y, "r.", markersize=3, zorder=1, label="Landing")
     axs[0].axis("square")
+    colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
+    linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
     confidence_ellipse(x, y, axs[0], n_std=1, label=r"$1\sigma$",
                        edgecolor=colors[2], ls=linestyles[0])
     confidence_ellipse(x, y, axs[0], n_std=2, label=r"$2\sigma$",
