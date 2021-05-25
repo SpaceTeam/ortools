@@ -115,7 +115,7 @@ def diana(directory, filename, config, output, coordinate_type, show):
                 randomize_simulation(orh, sim, rocket_components,
                                      original_parameters, random_parameters)
             else:
-                print("with nominal parameter set but wind-model")
+                print("with nominal parameter set but wind-model applied")
             result = run_simulation(orh, sim, config, random_parameters)
             results.append(result)
         t2 = time.time()
@@ -260,7 +260,7 @@ def set_up_random_parameters(orh, sim, config):
 def randomize_simulation(open_rocket_helper, sim, rocket_components,
                          original_parameters, random_parameters):
     """Set simulation parameters to random samples."""
-    print("Randomize variables...")
+    logging.info("Randomize variables...")
     options = sim.getOptions()
     options.setLaunchRodAngle(random_parameters.tilt())
     # Otherwise launch rod direction cannot be altered
@@ -268,29 +268,29 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     options.setLaunchRodDirection(random_parameters.azimuth())
     tilt = math.degrees(options.getLaunchRodAngle())
     azimuth = math.degrees(options.getLaunchRodDirection())
-    print("Launch rail tilt    = {:6.2f}°".format(tilt))
-    print("Launch rail azimuth = {:6.2f}°".format(azimuth))
+    logging.info("Launch rail tilt    = {:6.2f}°".format(tilt))
+    logging.info("Launch rail azimuth = {:6.2f}°".format(azimuth))
 
     # There can be more than one finset -> add unbiased
     # normaldistributed value
     ct = 0
-    print("Finset: ")
+    logging.info("Finset: ")
     for fins in rocket_components.fin_sets:
         fins.setCantAngle(original_parameters.fin_cant[ct]
                           + random_parameters.fin_cant())
         # FIXME: Is it rad or °? In set_up_random_parameters() it is rad.
-        print("{} with cant angle {:6.2f}°".format(fins.getName(),
+        logging.info("{} with cant angle {:6.2f}°".format(fins.getName(),
                                                    fins.getCantAngle()))
         ct += 1
 
     # There can be more than one parachute -> add unbiased
     # normaldistributed value
     ct = 0
-    print("Parachutes: ")
+    logging.info("Parachutes: ")
     for parachute in rocket_components.parachutes:
         parachute.setCD(max(original_parameters.parachute_cd[ct]
                             + random_parameters.parachute_cd(), 0.))
-        print(parachute.getName(),
+        logging.info(parachute.getName(),
               "with CD {:6.2f}".format(
             parachute.getCD()))
         ct += 1
@@ -316,7 +316,7 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     roughness_bins = (roughness_values[1:] + roughness_values[:-1]) / 2.
     logging.debug("bins {}".format(roughness_bins))
     ct = 0
-    print("External components: ")
+    logging.info("External components: ")
     for ext_comp in rocket_components.external_components:
         roughness_random = original_parameters.roughness[ct] + \
             random_parameters.roughness()
@@ -336,7 +336,7 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
             ext_comp.setFinish(ext_comp.Finish.SMOOTH)
         elif roughness_in_bin == 4:
             ext_comp.setFinish(ext_comp.Finish.POLISHED)
-        print(ext_comp,
+        logging.info(ext_comp,
               " with finish ",
               ext_comp.getFinish())
         ct += 1
@@ -410,8 +410,16 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
         self.landing_points = []
 
     def endSimulation(self, status, simulation_exception):
-        """Return the landing position from OpenRocket."""
+        """Return the landing position from OpenRocket and check exceptions
+        
+        (from OR code) simulation_exception: 
+        the exception that caused ending the simulation, or <code>null</code> if 
+        ending normally.
+        """
+        # TODO: do something senseful if exception is thrown
         self.landing_points.append(status.getRocketWorldPosition())
+        if simulation_exception is not None:
+            logging.warning("Simulation threw the exception ", (simulation_exception.args[0]))
 
 
 class MotorListener(orhelper.AbstractSimulationListener):
@@ -419,7 +427,7 @@ class MotorListener(orhelper.AbstractSimulationListener):
 
     def __init__(self, thrust_factor, nozzle_cross_section_mm2):
         self.thrust_factor = thrust_factor
-        print("Used thrust factor = {:6.2f}".format(thrust_factor))
+        logging.info("Used thrust factor = {:6.2f}".format(thrust_factor))
         self.nozzle_cross_section = nozzle_cross_section_mm2 * 1e-6
         logging.info("Nozzle cross section = {:6.2g}mm^2".format(
             nozzle_cross_section_mm2))
@@ -458,7 +466,7 @@ class WindListener(orhelper.AbstractSimulationListener):
             data = np.loadtxt(wind_model_file)
         except (IOError, FileNotFoundError):
             self._default_wind_model_is_used = True
-            print("Warning: wind model file '{}' ".format(wind_model_file)
+            logging.warning("Warning: wind model file '{}' ".format(wind_model_file)
                   + "not found! Default wind model will be used.")
             return
 
@@ -813,6 +821,11 @@ def confidence_ellipse(x, y, ax, n_std=3.0, facecolor="none", **kwargs):
     ellipse.set_transform(transf + ax.transData)
     return ax.add_patch(ellipse)
 
+def get_object_methods(obj):
+    """Return object methods for debugging/development"""
+    object_methods = [method_name for method_name in dir(obj)
+                  if callable(getattr(obj, method_name))]
+    print(object_methods)
 
 if __name__ == "__main__":
     diana()
