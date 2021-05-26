@@ -22,8 +22,8 @@ import collections
 
 
 plt.style.use("default")
-mpl.rcParams["figure.figsize"] = ((1920 - 160 - 30) / 5 / 25.4,
-                                  (1080 - 90 - 50) / 5 / 25.4)
+mpl.rcParams["figure.figsize"] = ((1920 - 160) / 5 / 25.4,
+                                  (1080 - 90) / 5 / 25.4)
 mpl.rcParams["figure.dpi"] = 254 / 2
 mpl.rcParams["axes.unicode_minus"] = True
 mpl.rcParams["axes.grid"] = True
@@ -670,13 +670,11 @@ def create_plots(results, output_filename, coordinate_type="flat",
         apogees = np.array([to_array(r[3]) for r in results])
         trajectories = [r[4] for r in results]
 
-    # fig, axs = plt.subplots(1, 3, tight_layout=True,
-    #                         gridspec_kw={"width_ratios": [2, 2, 1]})
     fig = plt.figure(constrained_layout=True)
+    # TODO: Increase pad on the right
     spec = mpl.gridspec.GridSpec(nrows=2, ncols=2, figure=fig,
                                  width_ratios=[1.5, 1],
-                                 height_ratios=[3.5, 1],
-                                 right=0.8)
+                                 height_ratios=[3.5, 1])
     ax_trajectories = fig.add_subplot(spec[:, 0], projection='3d')
     ax_landing_points = fig.add_subplot(spec[0, 1])
     ax_apogees = fig.add_subplot(spec[1, 1])
@@ -717,7 +715,9 @@ def create_plots(results, output_filename, coordinate_type="flat",
             + "Valid values are 'flat' and 'sphere'.")
     ax_lps.plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
     ax_lps.plot(x, y, "r.", markersize=3, zorder=1, label="Landing")
-    ax_lps.axis("square")
+    # FIXME: For some reason, this does not change the x limits so
+    # equalizing xlim and ylim with the 3d plot later on does not work.
+    ax_lps.axis("equal")
     colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
     linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
     confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
@@ -735,8 +735,8 @@ def create_plots(results, output_filename, coordinate_type="flat",
     n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
     ax_apogees.hist(apogees[:, 2], bins=n_bins, orientation="vertical",
                     fc=colors[2], ec="k")
-    ax_apogees.set_ylabel("Altitude in m")
-    ax_apogees.set_xlabel("Number of Simulations")
+    ax_apogees.set_xlabel("Altitude in m")
+    ax_apogees.set_ylabel("Number of Simulations")
 
     # Plot the trajectories
     ax_trajectories.set_title("Trajectories")
@@ -745,14 +745,21 @@ def create_plots(results, output_filename, coordinate_type="flat",
         x, y, alt = trajectory
         ax_trajectories.plot(xs=x, ys=y, zs=alt, color=color, linestyle="-")
     ax_trajectories.ticklabel_format(useOffset=False, style="plain")
-    # TODO: Set x and y limits equal to that of the landing points plot,
+    # Set x and y limits equal to that of the landing points plot. Does
+    # not work because .axis("equal") is strange.
+    xlim = ax_lps.get_xlim()
+    ylim = ax_lps.get_ylim()
+    print()
+    print("xlim", xlim)
+    print("ylim", ylim)
+    ax_trajectories.set_xlim(xlim)
+    ax_trajectories.set_ylim(ylim)
     ax_trajectories.set_xlabel("x in m")
     ax_trajectories.set_ylabel("y in m")
     ax_trajectories.set_zlabel("altitude in m")
 
     # Save and show the figure
     plt.suptitle("Dispersion Analysis of {} Simulations".format(n_simulations))
-    # plt.tight_layout()
     plt.savefig(output_filename)
     if results_are_shown:
         plt.show()
