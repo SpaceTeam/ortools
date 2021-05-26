@@ -74,12 +74,12 @@ def diana(directory, filename, config, output, coordinate_type, show):
 
         diana -d examples -o test.pdf -s
     """
-    # TODO: Measure and print total execution time
     # TODO: Maybe put .ork file path in config file
     t0 = time.time()
     ork_file_path = filename or utility.find_latest_file(".ork", directory)
     config_file_path = config or utility.find_latest_file(".ini", directory)
-    output_filename = output or "dispersion_analysis.pdf"
+    timestamp = str(int(time.time()))
+    output_filename = output or "dispersion_analysis_" + timestamp + ".pdf"
     results_are_shown = show
     print("directory   : {}".format(directory))
     print(".ork file   : {}".format(ork_file_path))
@@ -192,9 +192,8 @@ def set_up_random_parameters(orh, sim, config):
     original_roughness = []
     print("Rocket has {} stage(s).".format(rocket.getStageCount()))
     for component in orhelper.JIterator(rocket):
-        # TODO: This looks like a weird hack. Try type(component).
-        logging.debug("Component {} of type {}".format(
-            component.getName(), component.__class__.__name__))
+        logging.debug("Component {} of type {}".format(component.getName(),
+                                                       type(component)))
         # fins can be
         #   orh.openrocket.rocketcomponent.FreeformFinSet
         #   orh.openrocket.rocketcomponent.TrapezoidFinSet
