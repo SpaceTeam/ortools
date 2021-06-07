@@ -33,7 +33,7 @@ Tools and scripts for [OpenRocket](https://openrocket.info/) using Python and
    ```
 
 4. `diana` needs to find `OpenRocket-15.03.jar`. Call `diana` from the same folder or add the path
-   to an environment variable called `JAVA_HOME`.
+   to an environment variable called `CLASSPATH`, see [the oracle documentation](https://docs.oracle.com/javase/tutorial/essential/environment/paths.html).
 
 
 ## Usage
