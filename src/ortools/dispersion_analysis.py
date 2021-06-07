@@ -55,14 +55,14 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
                     "latest .ini file in `directory` is used."))
 @click.option("--output", "-o", type=click.Path(exists=False),
               help="Name of the file the output is saved to.")
-@click.option("--coordinate-type", "-ct",
-              type=click.Choice(["flat", "sphere"]),
+@click.option("--plot-coordinate-type", "-ct",
+              type=click.Choice(["flat", "wgs84"]),
               default="flat", show_default=True,
               help=("The type of coordinates used in the scatter plot of the "
                     "landing points."))
 @click.option("--show", "-s", is_flag=True, default=False,
               help="Show the results on screen.")
-def diana(directory, filename, config, output, coordinate_type, show):
+def diana(directory, filename, config, output, plot_coordinate_type, show):
     """Do a dispersion analysis of an OpenRocket simulation.
 
     A dispersion analysis runs multiple simulations with slightly
@@ -95,7 +95,11 @@ def diana(directory, filename, config, output, coordinate_type, show):
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
     if PLOTS_ARE_TESTED:
-        create_plots([], output_filename, coordinate_type, results_are_shown)
+        create_plots(
+            [],
+            output_filename,
+            plot_coordinate_type,
+            results_are_shown)
         return
 
     with orhelper.OpenRocketInstance() as instance:
@@ -125,7 +129,7 @@ def diana(directory, filename, config, output, coordinate_type, show):
         print("time for {} simulations = {:.1f}s".format(n_simulations,
                                                          t2 - t1))
         print("total execution time = {:.1f}s".format(t3 - t0))
-        create_plots(results, output_filename, coordinate_type,
+        create_plots(results, output_filename, plot_coordinate_type,
                      results_are_shown)
 
 
@@ -279,7 +283,7 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
                           + random_parameters.fin_cant())
         # FIXME: Is it rad or °? In set_up_random_parameters() it is rad.
         logging.info("{} with cant angle {:6.2f}°".format(fins.getName(),
-                                                   fins.getCantAngle()))
+                                                          fins.getCantAngle()))
         ct += 1
 
     # There can be more than one parachute -> add unbiased
@@ -290,7 +294,7 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
         parachute.setCD(max(original_parameters.parachute_cd[ct]
                             + random_parameters.parachute_cd(), 0.))
         logging.info(parachute.getName(),
-              "with CD {:6.2f}".format(
+                     "with CD {:6.2f}".format(
             parachute.getCD()))
         ct += 1
 
@@ -336,8 +340,8 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
         elif roughness_in_bin == 4:
             ext_comp.setFinish(ext_comp.Finish.POLISHED)
         logging.info(ext_comp,
-              " with finish ",
-              ext_comp.getFinish())
+                     " with finish ",
+                     ext_comp.getFinish())
         ct += 1
 
 
@@ -365,11 +369,13 @@ def run_simulation(orh, sim, config, random_parameters):
     # TODO: Return results in a nicer way, using a dictionary or
     # namedtuple for example. This makes handling afterwards easier
     # since we don't have to know which result is at which index
-    return (landing_point_listener.landing_points[0],
+    return (landing_point_listener.landing_points_world[0],
             launch_point_listener.launch_point,
             launch_point_listener.geodetic_computation,
             apogee,
-            trajectory)
+            trajectory,
+            landing_point_listener.landing_points_cartesian[0],
+            )
 
 
 class LaunchPointListener(orhelper.AbstractSimulationListener):
@@ -406,19 +412,23 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
     def __init__(self):
         # FIXME: This is a weird workaround because I don't know how to
         # create the member variable of the correct type.
-        self.landing_points = []
+        self.landing_points_world = []
+        self.landing_points_cartesian = []
 
     def endSimulation(self, status, simulation_exception):
         """Return the landing position from OpenRocket and check exceptions
-        
-        (from OR code) simulation_exception: 
-        the exception that caused ending the simulation, or <code>null</code> if 
+
+        (from OR code) simulation_exception:
+        the exception that caused ending the simulation, or <code>null</code> if
         ending normally.
         """
+        self.landing_points_world.append(status.getRocketWorldPosition())
+        self.landing_points_cartesian.append(status.getRocketPosition())
         # TODO: do something senseful if exception is thrown
-        self.landing_points.append(status.getRocketWorldPosition())
         if simulation_exception is not None:
-            logging.warning("Simulation threw the exception ", (simulation_exception.args[0]))
+            logging.warning(
+                "Simulation threw the exception ",
+                (simulation_exception.args[0]))
 
 
 class MotorListener(orhelper.AbstractSimulationListener):
@@ -446,7 +456,7 @@ class MotorListener(orhelper.AbstractSimulationListener):
                           + "= {:6.2f}N".format(thrust_increase))
             return self.thrust_factor * thrust + thrust_increase
         else:
-            return self.thrust_factor * thrust 
+            return self.thrust_factor * thrust
 
 
 class WindListener(orhelper.AbstractSimulationListener):
@@ -468,7 +478,7 @@ class WindListener(orhelper.AbstractSimulationListener):
         except (IOError, FileNotFoundError):
             self._default_wind_model_is_used = True
             logging.warning("Warning: wind model file '{}' ".format(wind_model_file)
-                  + "not found! Default wind model will be used.")
+                            + "not found! Default wind model will be used.")
             return
 
         self._default_wind_model_is_used = False
@@ -651,17 +661,22 @@ def compute_distance_and_bearing_flat(from_, to):
 
 
 # TODO: Try to refactor this ugly plotting function
-def create_plots(results, output_filename, coordinate_type="flat",
+def create_plots(results, output_filename, plot_coordinate_type="flat",
                  results_are_shown=False):
     """Create, store and optionally show the plots of the results.
 
     :raise ValueError:
-        If Coordinate type is not "flat" or "sphere".
+        If Coordinate type is not "flat" or "wgs84".
     """
-    def to_array(coordinate):
+    def to_array_world(coordinate):
         return np.array([coordinate.getLatitudeDeg(),
                         coordinate.getLongitudeDeg(),
                         coordinate.getAltitude()])
+
+    def to_array_cartesian(coordinate):
+        return np.array([coordinate.x,
+                        coordinate.y,
+                        coordinate.z])
 
     if PLOTS_ARE_TESTED:
         # Test Data
@@ -669,16 +684,22 @@ def create_plots(results, output_filename, coordinate_type="flat",
         n_simulations = 1000
         lat = rng.normal(55, 2, n_simulations)
         lon = rng.normal(20, 1, n_simulations)
-        landing_points = np.array([lat, lon]).T
+        landing_points_world = np.array([lat, lon]).T
+        landing_points_cartesian = np.array([lat, lon]).T
         alt = rng.normal(15346, 17, n_simulations)
         apogees = np.zeros((n_simulations, 3))
         apogees[:, 2] = alt
+        geodetic_computation = 'flat'
     else:
-        landing_points = np.array([to_array(r[0]) for r in results])
-        launch_point = to_array(results[0][1])
+        landing_points_world = np.array(
+            [to_array_world(r[0]) for r in results])
+        landing_points_cartesian = np.array(
+            [to_array_cartesian(r[5]) for r in results])
+        launch_point = to_array_world(results[0][1])
         geodetic_computation = results[0][2]
-        apogees = np.array([to_array(r[3]) for r in results])
+        apogees = np.array([to_array_world(r[3]) for r in results])
         trajectories = [r[4] for r in results]
+        geodetic_computation = results[0][2]
 
     fig = plt.figure(constrained_layout=True)
     # TODO: Increase pad on the right
@@ -692,37 +713,30 @@ def create_plots(results, output_filename, coordinate_type="flat",
     # Scatter plot of landing coordinates
     ax_lps = ax_landing_points
     ax_lps.set_title("Landing Points")
-    if coordinate_type == "flat":
-        if geodetic_computation == geodetic_computation.WGS84:
-            # OR simulated with WGS84 -> use flat projection
-            logging.info("Use WGS84-to-flatearth projection")
-            crs_wgs = pyproj.CRS("epsg:4326")
-            cust = pyproj.Proj(
-                "+proj=aeqd +lat_0={} ".format(launch_point[0])
-                + "+lon_0={} +datum=WGS84 +units=m".format(launch_point[1]))
-            x, y = pyproj.transform(
-                crs_wgs, cust, landing_points[:, 0], landing_points[:, 1])
-        else:
-            # OR simulated with FLAT coordinates -> take them directly
-            x = ((landing_points[:, 1] - launch_point[1])
-                 * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
-            y = ((landing_points[:, 0] - launch_point[0])
-                 * METERS_PER_DEGREE_LATITUDE)
+    if plot_coordinate_type == "flat":
+        # OR simulates with cartesian coordinates -> take them directly
+        x = landing_points_cartesian[:, 0]
+        y = landing_points_cartesian[:, 1]
         x0 = 0
         y0 = 0
         ax_lps.set_xlabel(r"$\Delta x$ in m")
         ax_lps.set_ylabel(r"$\Delta y$ in m")
-    elif coordinate_type == "sphere":
-        x = landing_points[:, 1]
-        y = landing_points[:, 0]
+    elif plot_coordinate_type == "wgs84":
+        # use world coordinates with OR's implementation of WGS84
+        if geodetic_computation == geodetic_computation.FLAT:
+            raise ValueError(
+                "Wrong geodetic_computation set in OR for plot coordinate type {}, change to WGS84!".format(plot_coordinate_type))
+        x = landing_points_world[:, 1]
+        y = landing_points_world[:, 0]
         x0 = launch_point[1]
         y0 = launch_point[0]
         ax_lps.set_xlabel("Longitude in °")
         ax_lps.set_ylabel("Latitude in °")
     else:
         raise ValueError(
-            "Coordinate type {} is not supported! ".format(coordinate_type)
-            + "Valid values are 'flat' and 'sphere'.")
+            "Coordinate type {} is not supported for plotting! ".format(
+                plot_coordinate_type)
+            + "Valid values are 'flat' and 'wgs84'.")
     ax_lps.plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
     ax_lps.plot(x, y, "r.", markersize=3, zorder=1, label="Landing")
     # FIXME: For some reason, this does not change the x limits so
@@ -751,21 +765,37 @@ def create_plots(results, output_filename, coordinate_type="flat",
     # Plot the trajectories
     ax_trajectories.set_title("Trajectories")
     colors = line_color_map(np.linspace(0, 1, len(trajectories)))
-    for trajectory, color in zip(trajectories, colors):
-        x, y, alt = trajectory
-        ax_trajectories.plot(xs=x, ys=y, zs=alt, color=color, linestyle="-")
-    ax_trajectories.ticklabel_format(useOffset=False, style="plain")
-    # Set x and y limits equal to that of the landing points plot. Does
-    # not work because .axis("equal") is strange.
-    xlim = ax_lps.get_xlim()
-    ylim = ax_lps.get_ylim()
-    print()
-    print("xlim", xlim)
-    print("ylim", ylim)
-    ax_trajectories.set_xlim(xlim)
-    ax_trajectories.set_ylim(ylim)
-    ax_trajectories.set_xlabel("x in m")
-    ax_trajectories.set_ylabel("y in m")
+    if plot_coordinate_type == "flat":
+        for trajectory, color in zip(trajectories, colors):
+            x, y, alt = trajectory
+            ax_trajectories.plot(
+                xs=x, ys=y, zs=alt, color=color, linestyle="-")
+        ax_trajectories.ticklabel_format(useOffset=False, style="plain")
+        # Set x and y limits equal to that of the landing points plot. Does
+        # not work because .axis("equal") is strange.
+        xlim = ax_lps.get_xlim()
+        ylim = ax_lps.get_ylim()
+        logging.debug("xlim", xlim)
+        logging.debug("ylim", ylim)
+        ax_trajectories.set_xlim(xlim)
+        ax_trajectories.set_ylim(ylim)
+        ax_trajectories.set_xlabel("x in m")
+        ax_trajectories.set_ylabel("y in m")
+    elif plot_coordinate_type == "wgs84":
+        # TODO create data also in WGS84, depending on plot_coordinate_type
+        for trajectory, color in zip(trajectories, colors):
+            x, y, alt = trajectory
+            ax_trajectories.plot(
+                xs=x, ys=y, zs=alt, color=color, linestyle="-")
+        ax_trajectories.ticklabel_format(useOffset=False, style="plain")
+        ax_trajectories.set_xlabel("x in m")
+        ax_trajectories.set_ylabel("y in m")
+
+    else:
+        raise ValueError(
+            "Coordinate type {} is not supported for plotting! ".format(
+                plot_coordinate_type)
+            + "Valid values are 'flat' and 'wgs84'.")
     ax_trajectories.set_zlabel("altitude in m")
 
     # Save and show the figure
@@ -829,11 +859,13 @@ def confidence_ellipse(x, y, ax, n_std=3.0, facecolor="none", **kwargs):
     ellipse.set_transform(transf + ax.transData)
     return ax.add_patch(ellipse)
 
+
 def get_object_methods(obj):
     """Return object methods for debugging/development"""
     object_methods = [method_name for method_name in dir(obj)
-                  if callable(getattr(obj, method_name))]
+                      if callable(getattr(obj, method_name))]
     print(object_methods)
+
 
 if __name__ == "__main__":
     diana()
