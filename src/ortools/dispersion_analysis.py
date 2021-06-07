@@ -438,13 +438,15 @@ class MotorListener(orhelper.AbstractSimulationListener):
 
     def postSimpleThrustCalculation(self, status, thrust):
         """Return the adapted thrust."""
+        # add thrust_increse if motor is burning and apply factor
         thrust_increase = (
             STANDARD_PRESSURE - self.pressure) * self.nozzle_cross_section
-        logging.debug("Thrust increase due to decreased ambient pressure "
-                      + "= {:6.2f}N".format(thrust_increase))
-        return self.thrust_factor * thrust
-        # return self.thrust_factor * thrust + thrust_increase # not stable?
-        # wrong unit or data format?
+        if thrust >= thrust_increase:
+            logging.debug("Thrust increase due to decreased ambient pressure "
+                          + "= {:6.2f}N".format(thrust_increase))
+            return self.thrust_factor * thrust + thrust_increase
+        else:
+            return self.thrust_factor * thrust 
 
 
 class WindListener(orhelper.AbstractSimulationListener):
