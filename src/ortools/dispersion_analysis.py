@@ -484,7 +484,10 @@ class WindListener(orhelper.AbstractSimulationListener):
         self._default_wind_model_is_used = False
         altitudes_m = data[:, 0]
         wind_directions_degree = data[:, 1]
+        wind_directions_rad = np.radians(wind_directions_degree)
         wind_speeds_mps = data[:, 2]
+        wind_speeds_north_mps = wind_speeds_mps * np.cos(wind_directions_rad)
+        wind_speeds_east_mps = wind_speeds_mps * np.sin(wind_directions_rad)
 
         if (len(altitudes_m) != len(wind_directions_degree)
                 or len(altitudes_m) != len(wind_speeds_mps)):
@@ -501,17 +504,17 @@ class WindListener(orhelper.AbstractSimulationListener):
         logging.debug("Wind speed (m/s) ")
         logging.debug(wind_speeds_mps)
 
-        # TODO: Which fill_values shall be used above the aloft
+        # assume that the intermediate values of a rotation of the wind by 180° is zero 
+        # instead of the same magnitude and 90° rotaion -> 
+        # use x/y coordinates for interpolation
+        # TODO: Which fill_values shall be used above the wind
         # data? zero? last value? extrapolate?
-        # TODO: This is not safe if direction rotates over 180deg ->
-        # use x/y coordinates
-        self.interpolate_wind_speed_mps = scipy.interpolate.interp1d(
-            altitudes_m, wind_speeds_mps, bounds_error=False,
-            fill_value=(wind_speeds_mps[0], wind_speeds_mps[-1]))
-        wind_directions_rad = np.radians(wind_directions_degree)
-        self.interpolate_wind_direction_rad = scipy.interpolate.interp1d(
-            altitudes_m, wind_directions_rad, bounds_error=False,
-            fill_value=(wind_directions_rad[0], wind_directions_rad[-1]))
+        self.interpolate_wind_speed_north_mps = scipy.interpolate.interp1d(
+            altitudes_m, wind_speeds_north_mps, bounds_error=False,
+            fill_value=(wind_speeds_north_mps[0], wind_speeds_north_mps[-1]))
+        self.interpolate_wind_speed_east_mps = scipy.interpolate.interp1d(
+            altitudes_m, wind_speeds_east_mps, bounds_error=False,
+            fill_value=(wind_speeds_east_mps[0], wind_speeds_east_mps[-1]))
 
     def preWindModel(self, status):
         """Set the wind coordinates at every simulation step."""
@@ -519,9 +522,11 @@ class WindListener(orhelper.AbstractSimulationListener):
             return None
 
         position = status.getRocketPosition()
-        wind_speed_mps = self.interpolate_wind_speed_mps(position.z)
-        wind_direction_rad = self.interpolate_wind_direction_rad(
-            position.z)
+        wind_speed_north_mps = self.interpolate_wind_speed_north_mps(position.z)
+        wind_speed_east_mps = self.interpolate_wind_speed_east_mps(position.z)
+        wind_speed_mps = math.sqrt(wind_speed_north_mps*wind_speed_north_mps
+                            + wind_speed_east_mps*wind_speed_east_mps)
+        wind_direction_rad = math.atan2(wind_speed_east_mps, wind_speed_north_mps)
 
         conditions = status.getSimulationConditions()
         wind_model = conditions.getWindModel()
@@ -619,7 +624,8 @@ def print_statistics(results):
     logging.debug("distances and bearings in polar coordinates")
     logging.debug(distances)
     logging.debug(bearings)
-
+    
+    #TODO how can one calculate the 2pi-safe statistics of the bearing
     print("---")
     print("Apogee: {:.1f}m ± {:.2f}m ".format(
         np.mean(max_altitude), np.std(max_altitude)))
@@ -645,7 +651,8 @@ def compute_distance_and_bearing_flat(from_, to):
     :return:
         A tuple containing (distance in m, bearing in °)
     """
-    # TODO: There should already be a package to convert lon, lat to x, y
+    # uses the world coordinates used by OR if 
+    # geodetic_computation=FLAT is set
     dx = ((to.getLongitudeDeg() - from_.getLongitudeDeg())
           * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
     dy = ((to.getLatitudeDeg() - from_.getLatitudeDeg())
@@ -655,8 +662,7 @@ def compute_distance_and_bearing_flat(from_, to):
     logging.debug("dx {:.1f}m, dy {:.1f}m".format(dx, dy))
     distance = math.sqrt(dx * dx + dy * dy)
     bearing = math.pi / 2. - math.atan2(dy, dx)
-    if bearing > math.pi:
-        bearing = bearing - 2 * math.pi
+
     return distance, bearing
 
 
