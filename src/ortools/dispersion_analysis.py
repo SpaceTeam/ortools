@@ -170,7 +170,9 @@ def set_up_random_parameters(orh, sim, config):
     sample when called.
     """
     options = sim.getOptions()
-    azimuth_mean = options.getLaunchRodDirection()
+    # this does not work, because at every save this setting is not kept..
+    #azimuth_mean = options.getLaunchRodDirection()
+    azimuth_mean = math.radians(float(config["LaunchRail"]["AzimuthMean"]))
     azimuth_stddev = math.radians(float(config["LaunchRail"]["Azimuth"]))
     tilt_mean = options.getLaunchRodAngle()
     tilt_stddev = math.radians(float(config["LaunchRail"]["Tilt"]))
