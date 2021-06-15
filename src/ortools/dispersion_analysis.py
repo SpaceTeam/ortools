@@ -856,14 +856,18 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
     # FIXME: For some reason, this does not change the x limits so
     # equalizing xlim and ylim with the 3d plot later on does not work.
     ax_lps.axis("equal")
+
     colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
     linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
-    confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
-                       edgecolor=colors[2], ls=linestyles[0])
-    confidence_ellipse(x, y, ax_lps, n_std=2, label=r"$2\sigma$",
-                       edgecolor=colors[1], ls=linestyles[1])
-    confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
-                       edgecolor=colors[0], ls=linestyles[2])
+
+    if len(x) > 2:
+        confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
+                           edgecolor=colors[2], ls=linestyles[0])
+        confidence_ellipse(x, y, ax_lps, n_std=2, label=r"$2\sigma$",
+                           edgecolor=colors[1], ls=linestyles[1])
+        confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
+                           edgecolor=colors[0], ls=linestyles[2])
+
     ax_lps.legend()
     ax_lps.ticklabel_format(useOffset=False, style="plain")
 
@@ -891,8 +895,9 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
         ylim = ax_lps.get_ylim()
         logging.debug("xlim", xlim)
         logging.debug("ylim", ylim)
-        ax_trajectories.set_xlim(xlim)
-        ax_trajectories.set_ylim(ylim)
+        # TODO trajectory might be outside of landing point scatter plot
+        # ax_trajectories.set_xlim(xlim)
+        # ax_trajectories.set_ylim(ylim)
         ax_trajectories.set_xlabel("x in m")
         ax_trajectories.set_ylabel("y in m")
     elif plot_coordinate_type == "wgs84":
