@@ -123,7 +123,7 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
             result = run_simulation(orh, sim, config, random_parameters)
             if result[3]:
                 results.append(result)
-                
+
         t2 = time.time()
         print_statistics(results)
         t3 = time.time()
@@ -368,8 +368,8 @@ def run_simulation(orh, sim, config, random_parameters, branch_number=0):
                         landing_point_listener,
                         wind_listener,
                         motor_listener))
-                        
-    """                
+
+    """
     (from OR code) simulation_exception:
     the exception that caused ending the simulation, or <code>null</code> if
     ending normally.
@@ -377,9 +377,11 @@ def run_simulation(orh, sim, config, random_parameters, branch_number=0):
     if landing_point_listener.simulation_exception is None:
         apogee = get_apogee(orh, sim, branch_number)
         trajectory = get_trajectory(orh, sim, branch_number)
-        landing_world, landing_cartesian = get_landing_site(orh, sim, branch_number)
-        theta_ignition, altitude_ignition = get_ignition_tilt(orh, sim, branch_number)
-    else:  
+        landing_world, landing_cartesian = get_landing_site(
+            orh, sim, branch_number)
+        theta_ignition, altitude_ignition = get_ignition_tilt(
+            orh, sim, branch_number)
+    else:
         logging.warning(
             "Simulation threw the exception " +
             landing_point_listener.simulation_exception.args[0])
@@ -387,7 +389,7 @@ def run_simulation(orh, sim, config, random_parameters, branch_number=0):
         trajectory = []
         landing_world = []
         landing_cartesian = []
-        
+
     # TODO: Return results in a nicer way, using a dictionary or
     # namedtuple for example. This makes handling afterwards easier
     # since we don't have to know which result is at which index
@@ -442,7 +444,8 @@ class LandingPointListener(orhelper.AbstractSimulationListener):
         ending normally.
         """
         self.simulation_exception = simulation_exception
-        
+
+
 class MotorListener(orhelper.AbstractSimulationListener):
     """Override the thrust of the motor."""
 
@@ -516,8 +519,8 @@ class WindListener(orhelper.AbstractSimulationListener):
         logging.debug("Wind speed (m/s) ")
         logging.debug(wind_speeds_mps)
 
-        # assume that the intermediate values of a rotation of the wind by 180° is zero 
-        # instead of the same magnitude and 90° rotaion -> 
+        # assume that the intermediate values of a rotation of the wind by 180° is zero
+        # instead of the same magnitude and 90° rotaion ->
         # use x/y coordinates for interpolation
         # TODO: Which fill_values shall be used above the wind
         # data? zero? last value? extrapolate?
@@ -534,11 +537,13 @@ class WindListener(orhelper.AbstractSimulationListener):
             return None
 
         position = status.getRocketPosition()
-        wind_speed_north_mps = self.interpolate_wind_speed_north_mps(position.z)
+        wind_speed_north_mps = self.interpolate_wind_speed_north_mps(
+            position.z)
         wind_speed_east_mps = self.interpolate_wind_speed_east_mps(position.z)
-        wind_speed_mps = math.sqrt(wind_speed_north_mps*wind_speed_north_mps
-                            + wind_speed_east_mps*wind_speed_east_mps)
-        wind_direction_rad = math.atan2(wind_speed_east_mps, wind_speed_north_mps)
+        wind_speed_mps = math.sqrt(wind_speed_north_mps * wind_speed_north_mps
+                                   + wind_speed_east_mps * wind_speed_east_mps)
+        wind_direction_rad = math.atan2(
+            wind_speed_east_mps, wind_speed_north_mps)
 
         conditions = status.getSimulationConditions()
         wind_model = conditions.getWindModel()
@@ -555,7 +560,7 @@ class WindListener(orhelper.AbstractSimulationListener):
 # results. Instead something like get_simulation_results() could be
 # implemented. This would be a nice separation of
 # concerns/responsibilities.
-def get_apogee(open_rocket_helper, simulation, branch_number = 0):
+def get_apogee(open_rocket_helper, simulation, branch_number=0):
     """Return the apogee of the simulation as ``WorldCoordinate``."""
     FlightDataType = orhelper.FlightDataType
     data = open_rocket_helper.get_timeseries(simulation, [
@@ -567,14 +572,15 @@ def get_apogee(open_rocket_helper, simulation, branch_number = 0):
     altitude = np.array(data[FlightDataType.TYPE_ALTITUDE])
     longitude = np.array(data[FlightDataType.TYPE_LONGITUDE])
     latitude = np.array(data[FlightDataType.TYPE_LATITUDE])
-    index_at = lambda t: (np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
+    def index_at(t): return (
+        np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
 
-    #TODO how can I determine the stage triggering the flight event?
+    # TODO how can I determine the stage triggering the flight event?
     events = open_rocket_helper.get_events(simulation)
     try:
         ct_apogee = len(events[orhelper.FlightEvent.APOGEE])
         print('# apogee events found: {}'.format(ct_apogee))
-        
+
         t_apogee = events[orhelper.FlightEvent.APOGEE][0]
         apogee = open_rocket_helper.openrocket.util.WorldCoordinate(
             math.degrees(latitude[index_at(t_apogee)]),
@@ -585,12 +591,12 @@ def get_apogee(open_rocket_helper, simulation, branch_number = 0):
             + "longitude {:.1f}°, ".format(apogee.getLatitudeDeg())
             + "latitude,{:.1f}°, ".format(apogee.getLongitudeDeg())
             + "altitude {:.1f}m".format(apogee.getAltitude()))
-    except: 
+    except BaseException:
         logging.warning('no apogee found')
     return apogee
-    
-    
-def get_landing_site(open_rocket_helper, simulation, branch_number = 0):
+
+
+def get_landing_site(open_rocket_helper, simulation, branch_number=0):
     """Return the landing site of the simulation as ``WorldCoordinate``."""
     FlightDataType = orhelper.FlightDataType
     data = open_rocket_helper.get_timeseries(simulation, [
@@ -606,11 +612,12 @@ def get_landing_site(open_rocket_helper, simulation, branch_number = 0):
     latitude = np.array(data[FlightDataType.TYPE_LATITUDE])
     position_x = np.array(data[FlightDataType.TYPE_POSITION_X])
     position_y = np.array(data[FlightDataType.TYPE_POSITION_Y])
-    index_at = lambda t: (np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
+    def index_at(t): return (
+        np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
 
-    #TODO how can I determine the stage triggering the flight event?
+    # TODO how can I determine the stage triggering the flight event?
     events = open_rocket_helper.get_events(simulation)
-    #try:
+    # try:
     ct_landings = len(events[orhelper.FlightEvent.GROUND_HIT])
     print('# ground hit events found: {}'.format(ct_landings))
 
@@ -630,13 +637,13 @@ def get_landing_site(open_rocket_helper, simulation, branch_number = 0):
         + "altitude {:.1f}m, ".format(landing_world.getAltitude())
         + "pos_x {:.1f}m, ".format(landing_cartesian.x)
         + "pos_y {:.1f}m".format(landing_cartesian.y))
-    #except:
-     #   logging.warning('no landing found')
+    # except:
+    #   logging.warning('no landing found')
 
     return landing_world, landing_cartesian
 
-    
-def get_ignition_tilt(open_rocket_helper, simulation, branch_number = 0):
+
+def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
     """Return the tilt angle at ignition."""
     FlightDataType = orhelper.FlightDataType
     data = open_rocket_helper.get_timeseries(simulation, [
@@ -646,31 +653,34 @@ def get_ignition_tilt(open_rocket_helper, simulation, branch_number = 0):
     t = np.array(data[FlightDataType.TYPE_TIME])
     theta = np.array(data[FlightDataType.TYPE_ORIENTATION_THETA])
     altitude = np.array(data[FlightDataType.TYPE_ALTITUDE])
-    index_at = lambda t: (np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
-    
+    def index_at(t): return (
+        np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
+
     events = open_rocket_helper.get_events(simulation)
     ct_ignitions = len(events[orhelper.FlightEvent.IGNITION])
     print('# ignition events found: {}'.format(ct_ignitions))
-    
+
     if ct_ignitions > 0:
         # normally we are interested in the latest ignition only
-        t_ignition = events[orhelper.FlightEvent.IGNITION][ct_ignitions-1]
+        t_ignition = events[orhelper.FlightEvent.IGNITION][ct_ignitions - 1]
         print("Ignition at {:.1f}s: ".format(t_ignition))
         theta_ignition = math.degrees(theta[index_at(t_ignition)])
         altitude_ignition = altitude[index_at(t_ignition)]
         print("theta {:.1f}°, ".format(theta_ignition)
-            + "altitude {:.1f}m, ".format(altitude_ignition))
+              + "altitude {:.1f}m, ".format(altitude_ignition))
     else:
         t_ignition = nan
         theta_ignition = nan
         phi_ignition = nan
         altitude_ignition = nan
-    
+
     return theta_ignition, altitude_ignition
-    
+
 # TODO: Return x, y or lat, lon depending on `coordinate_type`
 # TODO: I guess we should also directly use these x, y values for things
 # like apogee, landing points, launch point, etc.
+
+
 def get_trajectory(open_rocket_helper, simulation, branch_number=0):
     """Return the x, y and altitude values of the rocket.
 
@@ -722,8 +732,8 @@ def print_statistics(results):
     logging.debug("distances and bearings in polar coordinates")
     logging.debug(distances)
     logging.debug(bearings)
-    
-    #TODO how can one calculate the 2pi-safe statistics of the bearing
+
+    # TODO how can one calculate the 2pi-safe statistics of the bearing
     print("---")
     print("Apogee: {:.1f}m ± {:.2f}m ".format(
         np.mean(max_altitude), np.std(max_altitude)))
@@ -749,7 +759,7 @@ def compute_distance_and_bearing_flat(from_, to):
     :return:
         A tuple containing (distance in m, bearing in °)
     """
-    # uses the world coordinates used by OR if 
+    # uses the world coordinates used by OR if
     # geodetic_computation=FLAT is set
     dx = ((to.getLongitudeDeg() - from_.getLongitudeDeg())
           * METERS_PER_DEGREE_LONGITUDE_EQUATOR)
