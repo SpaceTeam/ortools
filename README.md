@@ -32,8 +32,13 @@ Tools and scripts for [OpenRocket](https://openrocket.info/) using Python and
    pip install orhelper
    ```
 
-4. `diana` needs to find `OpenRocket-15.03.jar`. Call `diana` from the same folder or add the path
+4. `diana` needs to find `OpenRocket-15.03.jar`. Call `diana` from the same folder or add the file
    to an environment variable called `CLASSPATH`, see [the oracle documentation](https://docs.oracle.com/javase/tutorial/essential/environment/paths.html).
+   Check with 
+   ```shell
+   echo %CLASSPATH%
+   $ PATHTTO\projects\OpenRocket-15.03.jar
+   ```
 
 
 ## Usage
