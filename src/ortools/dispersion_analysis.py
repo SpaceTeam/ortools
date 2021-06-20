@@ -15,6 +15,7 @@ import cycler
 
 import os
 import sys
+import csv
 import math
 import time
 import logging
@@ -111,6 +112,7 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
             set_up_random_parameters(orh, sim, config)
 
         results = []
+        parametersets = []
         n_simulations = int(config["General"]["NumberOfSimulations"])
         for i in range(n_simulations):
             print("-- Running simulation {:4} of {} --".format(
@@ -118,16 +120,23 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
             if i > 0:
                 randomize_simulation(orh, sim, rocket_components,
                                      random_parameters)
+                parameterset = get_simulation_parameters(orh,
+                                                         sim, rocket_components, random_parameters, True)
             else:
                 print("with nominal parameter set but wind-model applied")
-            result = run_simulation(orh, sim, config, random_parameters)
+                parameterset = get_simulation_parameters(orh,
+                                                         sim, rocket_components, random_parameters, False)
+
+            result = run_simulation(orh, sim, config, parameterset)
             if result.apogee:
                 results.append(result)
+                parametersets.append(parameterset)
+
         # the following functions rely on orhelper
         # -> run them before JVM is shut down
         t2 = time.time()
         print_statistics(results)
-        export_results(results)
+        export_results(results, parametersets)
         t3 = time.time()
         print("---")
         print("time for {} simulations = {:.1f}s".format(n_simulations,
@@ -217,13 +226,13 @@ def set_up_random_parameters(orh, sim, config):
         #   orh.openrocket.rocketcomponent.EllipticalFinSet
         if (isinstance(component, orh.openrocket.rocketcomponent.FinSet)):
             logging.info("Finset({}) with ".format(component.getName())
-                  + "cant angle {:6.2f}°".format(math.degrees(component.getCantAngle())))
+                         + "cant angle {:6.2f}°".format(math.degrees(component.getCantAngle())))
             components_fin_sets.append(component)
             fin_cant_means.append(component.getCantAngle())
         if isinstance(component, orh.openrocket.rocketcomponent.Parachute):
             logging.info("Parachute with drag surface diameter "
-                  + "{:6.2f}m and ".format(component.getDiameter())
-                  + "CD of {:6.2f}".format(component.getCD()))
+                         + "{:6.2f}m and ".format(component.getDiameter())
+                         + "CD of {:6.2f}".format(component.getCD()))
             components_parachutes.append(component)
             parachute_cd_means.append(component.getCD())
         if isinstance(component,
@@ -231,7 +240,8 @@ def set_up_random_parameters(orh, sim, config):
             logging.info("External component {} with finish {}".format(
                 component, component.getFinish()))
             components_external_components.append(component)
-            component_roughness_means.append(component.getFinish().getRoughnessSize())
+            component_roughness_means.append(
+                component.getFinish().getRoughnessSize())
 
     logging.info("Initial launch rail tilt    = {:6.2f}°".format(
         math.degrees(tilt_mean)))
@@ -259,36 +269,39 @@ def set_up_random_parameters(orh, sim, config):
             tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
             azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
             thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
-            fin_cants=lambda: [rng.normal(mean, fincant_stddev) for mean in fin_cant_means],
-            parachutes_cd=lambda: [rng.normal(mean, parachute_cd_stddev) for mean in parachute_cd_means],
+            fin_cants=lambda: [rng.normal(mean, fincant_stddev)
+                               for mean in fin_cant_means],
+            parachutes_cd=lambda: [
+                rng.normal(
+                    mean,
+                    parachute_cd_stddev) for mean in parachute_cd_means],
             roughnesses=lambda: [rng.normal(mean, roughness_stddev) for mean in component_roughness_means]))
 
 
 def randomize_simulation(open_rocket_helper, sim, rocket_components,
-            random_parameters):
-    """Set simulation parameters to random samples."""
+                         random_parameters):
+    """Set simulation parameters to random samples.
+    return the global parameter set"""
     logging.info("Randomize variables...")
     options = sim.getOptions()
     options.setLaunchRodAngle(random_parameters.tilt())
     # Otherwise launch rod direction cannot be altered
     options.setLaunchIntoWind(False)
     options.setLaunchRodDirection(random_parameters.azimuth())
-    tilt = math.degrees(options.getLaunchRodAngle())
-    azimuth = math.degrees(options.getLaunchRodDirection())
-    logging.info("New Launch rail tilt    = {:6.2f}°".format(tilt))
-    logging.info("Launch rail azimuth = {:6.2f}°".format(azimuth))
 
     # There can be more than one finset -> add unbiased
     # normaldistributed value
     logging.info("Finset: ")
-    for fins, fin_cant in zip(rocket_components.fin_sets, random_parameters.fin_cants() ):
+    for fins, fin_cant in zip(rocket_components.fin_sets,
+                              random_parameters.fin_cants()):
         fins.setCantAngle(fin_cant)
         logging.info("{} with cant angle {:6.2f}°".format(fins.getName(),
                                                           math.degrees(fins.getCantAngle())))
     # There can be more than one parachute -> add unbiased
     # normaldistributed value
     logging.info("Parachutes: ")
-    for parachute, parachute_cd in zip(rocket_components.parachutes, random_parameters.parachutes_cd()):
+    for parachute, parachute_cd in zip(
+            rocket_components.parachutes, random_parameters.parachutes_cd()):
         parachute.setCD(max([parachute_cd, 0.]))
         logging.info("{} with CD {:6.2f}".format(
             parachute.getName(),
@@ -315,7 +328,8 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     roughness_bins = (roughness_values[1:] + roughness_values[:-1]) / 2.
     logging.debug("bins {}".format(roughness_bins))
     logging.info("External components: ")
-    for ext_comp, roughness_random in zip(rocket_components.external_components, random_parameters.roughnesses()):
+    for ext_comp, roughness_random in zip(
+            rocket_components.external_components, random_parameters.roughnesses()):
         roughness_in_bin = np.digitize(roughness_random, roughness_bins)
         logging.debug(
             "roughness {} is in bin {}, i.e. {}".format(
@@ -336,7 +350,33 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
                      ext_comp.getFinish()))
 
 
-def run_simulation(orh, sim, config, random_parameters, branch_number=0):
+def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
+                              random_parameters, randomize=True):
+    """Collect all global simulation parameters for export"""
+    logging.info("Used global parameters...")
+    options = sim.getOptions()
+    tilt = math.degrees(options.getLaunchRodAngle())
+    azimuth = math.degrees(options.getLaunchRodDirection())
+    if randomize:
+        thrust_factor = random_parameters.thrust_factor()
+    else:
+        thrust_factor = 1.
+
+    logging.info("Launch rail tilt    = {:6.2f}°".format(tilt))
+    logging.info("Launch rail azimuth = {:6.2f}°".format(azimuth))
+    logging.info("Thrust factor = {:6.2f}".format(thrust_factor))
+
+    Parameters = collections.namedtuple("Parameters", [
+        "tilt",
+        "azimuth",
+        "thrust_factor"])
+    return Parameters(
+        tilt=tilt,
+        azimuth=azimuth,
+        thrust_factor=thrust_factor)
+
+
+def run_simulation(orh, sim, config, parameterset, branch_number=0):
     """Run a single simulation and return the results.
 
     :return:
@@ -347,7 +387,7 @@ def run_simulation(orh, sim, config, random_parameters, branch_number=0):
     launch_point_listener = LaunchPointListener()
     landing_point_listener = LandingPointListener()
     motor_listener = MotorListener(
-        random_parameters.thrust_factor(),
+        parameterset.thrust_factor,
         float(config["Propulsion"]["NozzleCrossSection"]))
 
     orh.run_simulation(
@@ -376,6 +416,8 @@ def run_simulation(orh, sim, config, random_parameters, branch_number=0):
         trajectory = []
         landing_world = []
         landing_cartesian = []
+        theta_ignition = []
+        altitude_ignition = []
 
     Results = collections.namedtuple("Results", [
         "landing_point_world",
@@ -383,14 +425,18 @@ def run_simulation(orh, sim, config, random_parameters, branch_number=0):
         "geodetic_computation",
         "apogee",
         "trajectory",
-        "landing_point_cartesian"])
-    r = Results(landing_point_world = landing_world,
-            launch_point = launch_point_listener.launch_point,
-            geodetic_computation = launch_point_listener.geodetic_computation,
-            apogee = apogee,
-            trajectory = trajectory,
-            landing_point_cartesian = landing_cartesian,
-            )
+        "landing_point_cartesian",
+        "theta_ignition",
+        "altitude_ignition"])
+    r = Results(landing_point_world=landing_world,
+                launch_point=launch_point_listener.launch_point,
+                geodetic_computation=launch_point_listener.geodetic_computation,
+                apogee=apogee,
+                trajectory=trajectory,
+                landing_point_cartesian=landing_cartesian,
+                theta_ignition=theta_ignition,
+                altitude_ignition=altitude_ignition
+                )
     return r
 
 
@@ -443,7 +489,6 @@ class MotorListener(orhelper.AbstractSimulationListener):
 
     def __init__(self, thrust_factor, nozzle_cross_section_mm2):
         self.thrust_factor = thrust_factor
-        logging.info("Used thrust factor = {:6.2f}".format(thrust_factor))
         self.nozzle_cross_section = nozzle_cross_section_mm2 * 1e-6
         logging.info("Nozzle cross section = {:6.2g}mm^2".format(
             nozzle_cross_section_mm2))
@@ -697,6 +742,8 @@ def print_statistics(results):
     launch_point = results[0].launch_point
     geodetic_computation = results[0].geodetic_computation
     apogees = [r.apogee for r in results]
+    ignitions_theta = [r.theta_ignition for r in results]
+    ignitions_altitude = [r.altitude_ignition for r in results]
 
     logging.debug("Results: distances in cartesian coordinates")
     distances = []
@@ -734,11 +781,35 @@ def print_statistics(results):
             np.mean(distances), np.std(distances))
         + "bearing {:.1f}° ± {:.1f}° ".format(
             np.degrees(np.mean(bearings)), np.degrees(np.std(bearings))))
+    print("Ignition at: {:.1f}m ± {:.2f}m ".format(
+        np.mean(ignitions_altitude), np.std(ignitions_altitude)))
+    print(" at tilt angle: {:.1f}° ± {:.2f}° ".format(
+        np.mean(ignitions_theta), np.std(ignitions_theta)))
     print("Based on {} simulations.".format(
         len(landing_points)))
 
-def export_results(results):
-    """Create csv with all simulation results."""
+
+def export_results(results, parametersets):
+    """Create csv with all simulation results and its global parameterset."""
+    with open("results.csv", 'w', newline='') as csvfile:
+        resultwriter = csv.writer(csvfile, delimiter=',')
+        resultwriter.writerow(["lat / deg", "lon / deg",
+                               "landing x / m", "landing y /m", "apogee / m",
+                               "ignition theta / deg", "ignition altitude / m",
+                               "tilt / deg", "azimuth / deg",
+                               "thrust_factor / 1"])
+        for r, p in zip(results, parametersets):
+            resultwriter.writerow([r.landing_point_world.getLatitudeDeg(),
+                                   r.landing_point_world.getLongitudeDeg(),
+                                   r.landing_point_cartesian.x,
+                                   r.landing_point_cartesian.y,
+                                   r.apogee.getAltitude(),
+                                   r.theta_ignition,
+                                   r.altitude_ignition,
+                                   p.tilt,
+                                   p.azimuth,
+                                   p.thrust_factor])
+
 
 def compute_distance_and_bearing_flat(from_, to):
     """Return distance and bearing betweeen two points.
