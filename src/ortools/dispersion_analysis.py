@@ -174,16 +174,23 @@ def set_up_random_parameters(orh, sim, config):
     sample when called.
     """
     options = sim.getOptions()
-    # this does not work, because at every save this setting is not kept..
+    # this does not work, because at every save this setting is not kept.
     #azimuth_mean = options.getLaunchRodDirection()
-    azimuth_mean = math.radians(float(config["LaunchRail"]["AzimuthMean"]))
+    # Workaround: set setLaunchIntoWind(False) and read azimuth from ini file
+    options.setLaunchIntoWind(False)
+    options.setLaunchRodDirection(
+        math.radians(float(config["LaunchRail"]["AzimuthMean"])))
+
+    azimuth_intowind = options.getLaunchIntoWind()
+    azimuth_mean = options.getLaunchRodDirection()
+
     azimuth_stddev = math.radians(float(config["LaunchRail"]["Azimuth"]))
     tilt_mean = options.getLaunchRodAngle()
     tilt_stddev = math.radians(float(config["LaunchRail"]["Tilt"]))
     thrust_factor_stddev = float(config["Propulsion"]["ThrustFactor"])
-    fincant_stddev = float(config["Aerodynamics"]["FinCant"])
+    fincant_stddev = math.radians(float(config["Aerodynamics"]["FinCant"]))
     parachute_cd_stddev = float(config["Aerodynamics"]["ParachuteCd"])
-    roughness_stddev = float(config["Aerodynamics"]["Roghness"])
+    roughness_stddev = float(config["Aerodynamics"]["Roughness"])
 
     # get rocket data
     opts = sim.getOptions()
@@ -209,27 +216,26 @@ def set_up_random_parameters(orh, sim, config):
         #   orh.openrocket.rocketcomponent.TrapezoidFinSet
         #   orh.openrocket.rocketcomponent.EllipticalFinSet
         if (isinstance(component, orh.openrocket.rocketcomponent.FinSet)):
-            # FIXME: Is it rad or °? In randomize_simulation() it is °.
-            print("Finset({}) with ".format(component.getName())
-                  + "cant angle {:6.2f}rad".format(component.getCantAngle()))
+            logging.info("Finset({}) with ".format(component.getName())
+                  + "cant angle {:6.2f}°".format(math.degrees(component.getCantAngle())))
             components_fin_sets.append(component)
             original_fin_cant.append(component.getCantAngle())
         if isinstance(component, orh.openrocket.rocketcomponent.Parachute):
-            print("Parachute with drag surface diameter "
+            logging.info("Parachute with drag surface diameter "
                   + "{:6.2f}m and ".format(component.getDiameter())
                   + "CD of {:6.2f}".format(component.getCD()))
             components_parachutes.append(component)
             original_parachute_cd.append(component.getCD())
         if isinstance(component,
                       orh.openrocket.rocketcomponent.ExternalComponent):
-            print("External component {} with finish {}".format(
+            logging.info("External component {} with finish {}".format(
                 component, component.getFinish()))
             components_external_components.append(component)
             original_roughness.append(component.getFinish().getRoughnessSize())
 
-    print("Initial launch rail tilt    = {:6.2f}°".format(
+    logging.info("Initial launch rail tilt    = {:6.2f}°".format(
         math.degrees(tilt_mean)))
-    print("Initial launch rail azimuth = {:6.2f}°".format(
+    logging.info("Initial launch rail azimuth = {:6.2f}°".format(
         math.degrees(azimuth_mean)))
 
     RocketComponents = collections.namedtuple("RocketComponents", [
@@ -277,7 +283,7 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     options.setLaunchRodDirection(random_parameters.azimuth())
     tilt = math.degrees(options.getLaunchRodAngle())
     azimuth = math.degrees(options.getLaunchRodDirection())
-    logging.info("Launch rail tilt    = {:6.2f}°".format(tilt))
+    logging.info("New Launch rail tilt    = {:6.2f}°".format(tilt))
     logging.info("Launch rail azimuth = {:6.2f}°".format(azimuth))
 
     # There can be more than one finset -> add unbiased
@@ -287,9 +293,8 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     for fins in rocket_components.fin_sets:
         fins.setCantAngle(original_parameters.fin_cant[ct]
                           + random_parameters.fin_cant())
-        # FIXME: Is it rad or °? In set_up_random_parameters() it is rad.
         logging.info("{} with cant angle {:6.2f}°".format(fins.getName(),
-                                                          fins.getCantAngle()))
+                                                          math.degrees(fins.getCantAngle())))
         ct += 1
 
     # There can be more than one parachute -> add unbiased
@@ -299,8 +304,8 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     for parachute in rocket_components.parachutes:
         parachute.setCD(max(original_parameters.parachute_cd[ct]
                             + random_parameters.parachute_cd(), 0.))
-        logging.info(parachute.getName(),
-                     "with CD {:6.2f}".format(
+        logging.info("{} with CD {:6.2f}".format(
+            parachute.getName(),
             parachute.getCD()))
         ct += 1
 
@@ -345,9 +350,8 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
             ext_comp.setFinish(ext_comp.Finish.SMOOTH)
         elif roughness_in_bin == 4:
             ext_comp.setFinish(ext_comp.Finish.POLISHED)
-        logging.info(ext_comp,
-                     " with finish ",
-                     ext_comp.getFinish())
+        logging.info("{} with finish {}".format(ext_comp,
+                     ext_comp.getFinish()))
         ct += 1
 
 
@@ -513,13 +517,13 @@ class WindListener(orhelper.AbstractSimulationListener):
                 + "`wind_directions_degree` and `wind_speeds_mps` must be "
                 + "of the same length.")
 
-        logging.debug("Input wind levels model data:")
-        logging.debug("Altitude (m) ")
-        logging.debug(altitudes_m)
-        logging.debug("Direction (°) ")
-        logging.debug(wind_directions_degree)
-        logging.debug("Wind speed (m/s) ")
-        logging.debug(wind_speeds_mps)
+        logging.info("Input wind levels model data:")
+        logging.info("Altitude (m) ")
+        logging.info(altitudes_m)
+        logging.info("Direction (°) ")
+        logging.info(wind_directions_degree)
+        logging.info("Wind speed (m/s) ")
+        logging.info(wind_speeds_mps)
 
         # assume that the intermediate values of a rotation of the wind by 180° is zero
         # instead of the same magnitude and 90° rotaion ->
