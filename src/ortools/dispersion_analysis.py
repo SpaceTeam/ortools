@@ -62,8 +62,11 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
               help=("The type of coordinates used in the scatter plot of the "
                     "landing points."))
 @click.option("--show", "-s", is_flag=True, default=False,
-              help="Show the results on screen.")
-def diana(directory, filename, config, output, plot_coordinate_type, show):
+              help="Show the plots.")
+@click.option("--verbose", "-v", is_flag=True, default=False,
+              help="Show detailed results on screen.")
+def diana(directory, filename, config, output,
+          plot_coordinate_type, show, verbose):
     """Do a dispersion analysis of an OpenRocket simulation.
 
     A dispersion analysis runs multiple simulations with slightly
@@ -92,8 +95,11 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
     print("output file : {}".format(output_filename))
 
     # Setup of logging on stderr
-    # Use logging.WARNING, or logging.DEBUG if necessary
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    if verbose:
+        logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    else:
+        # Use logging.WARNING, or logging.DEBUG if necessary
+        logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
     if PLOTS_ARE_TESTED:
         create_plots(
@@ -616,14 +622,14 @@ def get_apogee(open_rocket_helper, simulation, branch_number=0):
     events = open_rocket_helper.get_events(simulation)
     try:
         ct_apogee = len(events[orhelper.FlightEvent.APOGEE])
-        print('# apogee events found: {}'.format(ct_apogee))
+        logging.info('# apogee events found: {}'.format(ct_apogee))
 
         t_apogee = events[orhelper.FlightEvent.APOGEE][0]
         apogee = open_rocket_helper.openrocket.util.WorldCoordinate(
             math.degrees(latitude[index_at(t_apogee)]),
             math.degrees(longitude[index_at(t_apogee)]),
             altitude[index_at(t_apogee)])
-        logging.debug(
+        logging.info(
             "Apogee at {:.1f}s: ".format(t_apogee)
             + "longitude {:.1f}°, ".format(apogee.getLatitudeDeg())
             + "latitude,{:.1f}°, ".format(apogee.getLongitudeDeg())
@@ -656,7 +662,7 @@ def get_landing_site(open_rocket_helper, simulation, branch_number=0):
     events = open_rocket_helper.get_events(simulation)
     # try:
     ct_landings = len(events[orhelper.FlightEvent.GROUND_HIT])
-    print('# ground hit events found: {}'.format(ct_landings))
+    logging.info('# ground hit events found: {}'.format(ct_landings))
 
     t_landing = events[orhelper.FlightEvent.GROUND_HIT][0]
     landing_world = open_rocket_helper.openrocket.util.WorldCoordinate(
@@ -667,7 +673,7 @@ def get_landing_site(open_rocket_helper, simulation, branch_number=0):
         position_x[index_at(t_landing)],
         position_y[index_at(t_landing)],
         altitude[index_at(t_landing)])
-    logging.debug(
+    logging.info(
         "Landing at {:.1f}s: ".format(t_landing)
         + "longitude {:.1f}°, ".format(landing_world.getLatitudeDeg())
         + "latitude,{:.1f}°, ".format(landing_world.getLongitudeDeg())
@@ -695,16 +701,16 @@ def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
 
     events = open_rocket_helper.get_events(simulation)
     ct_ignitions = len(events[orhelper.FlightEvent.IGNITION])
-    print('# ignition events found: {}'.format(ct_ignitions))
+    logging.info('# ignition events found: {}'.format(ct_ignitions))
 
     if ct_ignitions > 0:
         # normally we are interested in the latest ignition only
         t_ignition = events[orhelper.FlightEvent.IGNITION][ct_ignitions - 1]
-        print("Ignition at {:.1f}s: ".format(t_ignition))
+        logging.info("Ignition at {:.1f}s: ".format(t_ignition))
         theta_ignition = math.degrees(theta[index_at(t_ignition)])
         altitude_ignition = altitude[index_at(t_ignition)]
-        print("theta {:.1f}°, ".format(theta_ignition)
-              + "altitude {:.1f}m, ".format(altitude_ignition))
+        logging.info("theta {:.1f}°, ".format(theta_ignition)
+                     + "altitude {:.1f}m, ".format(altitude_ignition))
     else:
         t_ignition = nan
         theta_ignition = nan
@@ -781,7 +787,7 @@ def print_statistics(results):
             np.mean(distances), np.std(distances))
         + "bearing {:.1f}° ± {:.1f}° ".format(
             np.degrees(np.mean(bearings)), np.degrees(np.std(bearings))))
-    print("Ignition at: {:.1f}m ± {:.2f}m ".format(
+    print("Ignition at altitude: {:.1f}m ± {:.2f}m ".format(
         np.mean(ignitions_altitude), np.std(ignitions_altitude)))
     print(" at tilt angle: {:.1f}° ± {:.2f}° ".format(
         np.mean(ignitions_theta), np.std(ignitions_theta)))
