@@ -107,7 +107,7 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
         orh = orhelper.Helper(instance)
         i_simulation = int(config["General"]["SimulationIndex"])
         sim = get_simulation(orh, ork_file_path, i_simulation)
-        rocket_components, original_parameters, random_parameters = \
+        rocket_components, random_parameters = \
             set_up_random_parameters(orh, sim, config)
 
         results = []
@@ -117,15 +117,17 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
                 i + 1, n_simulations))
             if i > 0:
                 randomize_simulation(orh, sim, rocket_components,
-                                     original_parameters, random_parameters)
+                                     random_parameters)
             else:
                 print("with nominal parameter set but wind-model applied")
             result = run_simulation(orh, sim, config, random_parameters)
-            if result[3]:
+            if result.apogee:
                 results.append(result)
-
+        # the following functions rely on orhelper
+        # -> run them before JVM is shut down
         t2 = time.time()
         print_statistics(results)
+        export_results(results)
         t3 = time.time()
         print("---")
         print("time for {} simulations = {:.1f}s".format(n_simulations,
@@ -201,12 +203,10 @@ def set_up_random_parameters(orh, sim, config):
     components_fin_sets = []
     components_parachutes = []
     components_external_components = []
-    # TODO: Remove these original values. They should be set as the mean
-    # of the normal distribution. If there are multiple fin_cants, etc.
-    # just make that part of the RandomParameters a list.
-    original_fin_cant = []
-    original_parachute_cd = []
-    original_roughness = []
+
+    fin_cant_means = []
+    parachute_cd_means = []
+    component_roughness_means = []
     print("Rocket has {} stage(s).".format(rocket.getStageCount()))
     for component in orhelper.JIterator(rocket):
         logging.debug("Component {} of type {}".format(component.getName(),
@@ -219,19 +219,19 @@ def set_up_random_parameters(orh, sim, config):
             logging.info("Finset({}) with ".format(component.getName())
                   + "cant angle {:6.2f}°".format(math.degrees(component.getCantAngle())))
             components_fin_sets.append(component)
-            original_fin_cant.append(component.getCantAngle())
+            fin_cant_means.append(component.getCantAngle())
         if isinstance(component, orh.openrocket.rocketcomponent.Parachute):
             logging.info("Parachute with drag surface diameter "
                   + "{:6.2f}m and ".format(component.getDiameter())
                   + "CD of {:6.2f}".format(component.getCD()))
             components_parachutes.append(component)
-            original_parachute_cd.append(component.getCD())
+            parachute_cd_means.append(component.getCD())
         if isinstance(component,
                       orh.openrocket.rocketcomponent.ExternalComponent):
             logging.info("External component {} with finish {}".format(
                 component, component.getFinish()))
             components_external_components.append(component)
-            original_roughness.append(component.getFinish().getRoughnessSize())
+            component_roughness_means.append(component.getFinish().getRoughnessSize())
 
     logging.info("Initial launch rail tilt    = {:6.2f}°".format(
         math.degrees(tilt_mean)))
@@ -242,38 +242,30 @@ def set_up_random_parameters(orh, sim, config):
         "fin_sets",
         "parachutes",
         "external_components"])
-    OriginalParameters = collections.namedtuple("OriginalParameters", [
-        "fin_cant",
-        "parachute_cd",
-        "roughness"])
     rng = np.random.default_rng()
     RandomParameters = collections.namedtuple("RandomParameters", [
         "tilt",
         "azimuth",
         "thrust_factor",
-        "fin_cant",
-        "parachute_cd",
-        "roughness"])
+        "fin_cants",
+        "parachutes_cd",
+        "roughnesses"])
     return (
         RocketComponents(
             fin_sets=components_fin_sets,
             parachutes=components_parachutes,
             external_components=components_external_components),
-        OriginalParameters(
-            fin_cant=original_fin_cant,
-            parachute_cd=original_parachute_cd,
-            roughness=original_roughness),
         RandomParameters(
             tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
             azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
             thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
-            fin_cant=lambda: rng.normal(0, fincant_stddev),
-            parachute_cd=lambda: rng.normal(0, parachute_cd_stddev),
-            roughness=lambda: rng.normal(0, roughness_stddev)))
+            fin_cants=lambda: [rng.normal(mean, fincant_stddev) for mean in fin_cant_means],
+            parachutes_cd=lambda: [rng.normal(mean, parachute_cd_stddev) for mean in parachute_cd_means],
+            roughnesses=lambda: [rng.normal(mean, roughness_stddev) for mean in component_roughness_means]))
 
 
 def randomize_simulation(open_rocket_helper, sim, rocket_components,
-                         original_parameters, random_parameters):
+            random_parameters):
     """Set simulation parameters to random samples."""
     logging.info("Randomize variables...")
     options = sim.getOptions()
@@ -288,26 +280,19 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
 
     # There can be more than one finset -> add unbiased
     # normaldistributed value
-    ct = 0
     logging.info("Finset: ")
-    for fins in rocket_components.fin_sets:
-        fins.setCantAngle(original_parameters.fin_cant[ct]
-                          + random_parameters.fin_cant())
+    for fins, fin_cant in zip(rocket_components.fin_sets, random_parameters.fin_cants() ):
+        fins.setCantAngle(fin_cant)
         logging.info("{} with cant angle {:6.2f}°".format(fins.getName(),
                                                           math.degrees(fins.getCantAngle())))
-        ct += 1
-
     # There can be more than one parachute -> add unbiased
     # normaldistributed value
-    ct = 0
     logging.info("Parachutes: ")
-    for parachute in rocket_components.parachutes:
-        parachute.setCD(max(original_parameters.parachute_cd[ct]
-                            + random_parameters.parachute_cd(), 0.))
+    for parachute, parachute_cd in zip(rocket_components.parachutes, random_parameters.parachutes_cd()):
+        parachute.setCD(max([parachute_cd, 0.]))
         logging.info("{} with CD {:6.2f}".format(
             parachute.getName(),
             parachute.getCD()))
-        ct += 1
 
     # TODO: How can one change the finish roughness with arbitrary
     # values? the Finish(string, double) constructor is private:
@@ -329,11 +314,8 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     # Calculate bin edges, average between adjacent roughness_values
     roughness_bins = (roughness_values[1:] + roughness_values[:-1]) / 2.
     logging.debug("bins {}".format(roughness_bins))
-    ct = 0
     logging.info("External components: ")
-    for ext_comp in rocket_components.external_components:
-        roughness_random = original_parameters.roughness[ct] + \
-            random_parameters.roughness()
+    for ext_comp, roughness_random in zip(rocket_components.external_components, random_parameters.roughnesses()):
         roughness_in_bin = np.digitize(roughness_random, roughness_bins)
         logging.debug(
             "roughness {} is in bin {}, i.e. {}".format(
@@ -352,7 +334,6 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
             ext_comp.setFinish(ext_comp.Finish.POLISHED)
         logging.info("{} with finish {}".format(ext_comp,
                      ext_comp.getFinish()))
-        ct += 1
 
 
 def run_simulation(orh, sim, config, random_parameters, branch_number=0):
@@ -396,16 +377,21 @@ def run_simulation(orh, sim, config, random_parameters, branch_number=0):
         landing_world = []
         landing_cartesian = []
 
-    # TODO: Return results in a nicer way, using a dictionary or
-    # namedtuple for example. This makes handling afterwards easier
-    # since we don't have to know which result is at which index
-    return (landing_world,
-            launch_point_listener.launch_point,
-            launch_point_listener.geodetic_computation,
-            apogee,
-            trajectory,
-            landing_cartesian,
+    Results = collections.namedtuple("Results", [
+        "landing_point_world",
+        "launch_point",
+        "geodetic_computation",
+        "apogee",
+        "trajectory",
+        "landing_point_cartesian"])
+    r = Results(landing_point_world = landing_world,
+            launch_point = launch_point_listener.launch_point,
+            geodetic_computation = launch_point_listener.geodetic_computation,
+            apogee = apogee,
+            trajectory = trajectory,
+            landing_point_cartesian = landing_cartesian,
             )
+    return r
 
 
 class LaunchPointListener(orhelper.AbstractSimulationListener):
@@ -707,10 +693,10 @@ def get_trajectory(open_rocket_helper, simulation, branch_number=0):
 
 def print_statistics(results):
     """Print statistics of all simulation results."""
-    landing_points = [r[0] for r in results]
-    launch_point = results[0][1]
-    geodetic_computation = results[0][2]
-    apogees = [r[3] for r in results]
+    landing_points = [r.landing_point_world for r in results]
+    launch_point = results[0].launch_point
+    geodetic_computation = results[0].geodetic_computation
+    apogees = [r.apogee for r in results]
 
     logging.debug("Results: distances in cartesian coordinates")
     distances = []
@@ -751,6 +737,8 @@ def print_statistics(results):
     print("Based on {} simulations.".format(
         len(landing_points)))
 
+def export_results(results):
+    """Create csv with all simulation results."""
 
 def compute_distance_and_bearing_flat(from_, to):
     """Return distance and bearing betweeen two points.
@@ -812,14 +800,13 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
         geodetic_computation = 'flat'
     else:
         landing_points_world = np.array(
-            [to_array_world(r[0]) for r in results])
+            [to_array_world(r.landing_point_world) for r in results])
         landing_points_cartesian = np.array(
-            [to_array_cartesian(r[5]) for r in results])
-        launch_point = to_array_world(results[0][1])
-        geodetic_computation = results[0][2]
-        apogees = np.array([to_array_world(r[3]) for r in results])
-        trajectories = [r[4] for r in results]
-        geodetic_computation = results[0][2]
+            [to_array_cartesian(r.landing_point_cartesian) for r in results])
+        launch_point = to_array_world(results[0].launch_point)
+        geodetic_computation = results[0].geodetic_computation
+        apogees = np.array([to_array_world(r.apogee) for r in results])
+        trajectories = [r.trajectory for r in results]
 
     fig = plt.figure(constrained_layout=True)
     # TODO: Increase pad on the right
