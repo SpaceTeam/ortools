@@ -83,7 +83,7 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
     make_paths_in_config_absolute(config, config_file_path)
 
     timestamp = str(int(time.time()))
-    output_filename = output or "dispersion_analysis_" + timestamp + ".pdf"
+    output_filename = output or "dispersion_analysis_" + timestamp
     results_are_shown = show
     ork_file_path = config["General"]["OrkFile"]
     print("directory   : {}".format(directory))
@@ -136,7 +136,7 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
         # -> run them before JVM is shut down
         t2 = time.time()
         print_statistics(results)
-        export_results(results, parametersets)
+        export_results(results, parametersets, output_filename)
         t3 = time.time()
         print("---")
         print("time for {} simulations = {:.1f}s".format(n_simulations,
@@ -789,9 +789,9 @@ def print_statistics(results):
         len(landing_points)))
 
 
-def export_results(results, parametersets):
+def export_results(results, parametersets, output_filename):
     """Create csv with all simulation results and its global parameterset."""
-    with open("results.csv", 'w', newline='') as csvfile:
+    with open(output_filename + ".csv", 'w', newline='') as csvfile:
         resultwriter = csv.writer(csvfile, delimiter=',')
         resultwriter.writerow(["lat / deg", "lon / deg",
                                "landing x / m", "landing y /m", "apogee / m",
@@ -878,15 +878,16 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
         geodetic_computation = results[0].geodetic_computation
         apogees = np.array([to_array_world(r.apogee) for r in results])
         trajectories = [r.trajectory for r in results]
+        ignitions_theta = [r.theta_ignition for r in results]
+        ignitions_altitude = [r.altitude_ignition for r in results]
+    n_simulations = apogees.shape[0]
 
     fig = plt.figure(constrained_layout=True)
     # TODO: Increase pad on the right
-    spec = mpl.gridspec.GridSpec(nrows=2, ncols=2, figure=fig,
-                                 width_ratios=[1.5, 1],
-                                 height_ratios=[3.5, 1])
-    ax_trajectories = fig.add_subplot(spec[:, 0], projection='3d')
+    spec = mpl.gridspec.GridSpec(nrows=1, ncols=2, figure=fig,
+                                 width_ratios=[1.5, 1],)
+    ax_trajectories = fig.add_subplot(spec[0, 0], projection='3d')
     ax_landing_points = fig.add_subplot(spec[0, 1])
-    ax_apogees = fig.add_subplot(spec[1, 1])
 
     # Scatter plot of landing coordinates
     ax_lps = ax_landing_points
@@ -935,15 +936,6 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
     ax_lps.legend()
     ax_lps.ticklabel_format(useOffset=False, style="plain")
 
-    # Histogram of apogee altitudes
-    ax_apogees.set_title("Apogees")
-    n_simulations = apogees.shape[0]
-    n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
-    ax_apogees.hist(apogees[:, 2], bins=n_bins, orientation="vertical",
-                    fc=colors[2], ec="k")
-    ax_apogees.set_xlabel("Altitude in m")
-    ax_apogees.set_ylabel("Number of Simulations")
-
     # Plot the trajectories
     ax_trajectories.set_title("Trajectories")
     colors = line_color_map(np.linspace(0, 1, len(trajectories)))
@@ -973,7 +965,6 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
         ax_trajectories.ticklabel_format(useOffset=False, style="plain")
         ax_trajectories.set_xlabel("x in m")
         ax_trajectories.set_ylabel("y in m")
-
     else:
         raise ValueError(
             "Coordinate type {} is not supported for plotting! ".format(
@@ -983,7 +974,48 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
 
     # Save and show the figure
     plt.suptitle("Dispersion Analysis of {} Simulations".format(n_simulations))
-    plt.savefig(output_filename)
+    plt.savefig(output_filename + "_diana.pdf")
+    if results_are_shown:
+        plt.show()
+
+    figHist = plt.figure(constrained_layout=True)
+    spec = mpl.gridspec.GridSpec(nrows=1, ncols=3, figure=figHist,
+                                 width_ratios=[1, 1, 1])
+    ax_apogees = figHist.add_subplot(spec[0, 0])
+    ax_ignition_tilt = figHist.add_subplot(spec[0, 1])
+    ax_ignition_altitude = figHist.add_subplot(spec[0, 2])
+
+    # Histogram of apogee altitudes
+    ax_apogees.set_title("Apogees")
+    n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
+    ax_apogees.hist(apogees[:, 2], bins=n_bins, orientation="vertical", ec="k")
+    ax_apogees.set_xlabel("Altitude in m")
+    ax_apogees.set_ylabel("Number of Simulations")
+
+    # Histogram of tilt at ignition
+    ax_ignition_tilt.set_title("Last Ignition Event")
+    n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
+    ax_ignition_tilt.hist(
+        ignitions_theta,
+        bins=n_bins,
+        orientation="vertical",
+        ec="k")
+    ax_ignition_tilt.set_xlabel("Tilt in °")
+    ax_ignition_tilt.set_ylabel("Number of Simulations")
+    # Histogram of altitude at ignition
+    ax_ignition_altitude.set_title("Last Ignition Event")
+    n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
+    ax_ignition_altitude.hist(
+        ignitions_altitude,
+        bins=n_bins,
+        orientation="vertical",
+        ec="k")
+    ax_ignition_altitude.set_xlabel("Altitude in m")
+    ax_ignition_altitude.set_ylabel("Number of Simulations")
+
+    # Save and show the figure
+    plt.suptitle("Statistics of {} Simulations".format(n_simulations))
+    plt.savefig(output_filename + "_stats.pdf")
     if results_are_shown:
         plt.show()
 
