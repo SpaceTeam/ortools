@@ -44,7 +44,7 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
 @click.command(context_settings=CONTEXT_SETTINGS)
 @click.option("--directory", "-d", type=click.Path(exists=True),
-              default=".", show_default=True,
+              default="examples/", show_default=True,
               help=("Directory in which the .ork and .ini files are located/"
                     "searched for."))
 @click.option("--filename", "-f", type=click.Path(exists=True),
@@ -74,25 +74,25 @@ def diana(directory, filename, config, output, plot_coordinate_type, show):
 
         diana -d examples -o test.pdf -s
     """
-    # TODO: Maybe put .ork file path in config file
     t0 = time.time()
-    ork_file_path = filename or utility.find_latest_file(".ork", directory)
     config_file_path = config or utility.find_latest_file(".ini", directory)
-    timestamp = str(int(time.time()))
-    output_filename = output or "dispersion_analysis_" + timestamp + ".pdf"
-    results_are_shown = show
-    print("directory   : {}".format(directory))
-    print(".ork file   : {}".format(ork_file_path))
-    print("config file : {}".format(config_file_path))
-    print("output file : {}".format(output_filename))
     config = configparser.ConfigParser()
     # TODO: Define default values for all parameters of the .ini fileata file)
     config.read(config_file_path)
     make_paths_in_config_absolute(config, config_file_path)
 
+    timestamp = str(int(time.time()))
+    output_filename = output or "dispersion_analysis_" + timestamp + ".pdf"
+    results_are_shown = show
+    ork_file_path = config["General"]["OrkFile"]
+    print("directory   : {}".format(directory))
+    print(".ork file   : {}".format(ork_file_path))
+    print("config file : {}".format(config_file_path))
+    print("output file : {}".format(output_filename))
+
     # Setup of logging on stderr
     # Use logging.WARNING, or logging.DEBUG if necessary
-    logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
     if PLOTS_ARE_TESTED:
         create_plots(
@@ -140,6 +140,8 @@ def make_paths_in_config_absolute(config, config_file_path):
     directory = os.path.dirname(os.path.abspath(config_file_path))
     config["WindModel"]["DataFile"] = os.path.join(
         directory, config["WindModel"]["DataFile"])
+    config["General"]["OrkFile"] = os.path.join(
+        directory, config["General"]["OrkFile"])
 
 
 def get_simulation(open_rocket_helper, ork_file_path, i_simulation):
