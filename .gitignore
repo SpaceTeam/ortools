@@ -10,13 +10,18 @@ __pycache__
 coverage.xml
 htmlcov/
 
-doc/build/
-
 *.hdf5
 *.png
-*.pdf
 
+# results
+*.pdf
+*.csv
+*.kml
+
+# input files
+*.txt
 *.ini
 *.ork
+!examples/*.txt
 !examples/*.ini
 !examples/*.ork
