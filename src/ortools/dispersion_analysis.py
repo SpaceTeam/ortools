@@ -12,6 +12,7 @@ import configparser
 import scipy.interpolate
 import pyproj
 import cycler
+import simplekml
 
 import os
 import sys
@@ -35,6 +36,8 @@ mpl.rcParams["axes.prop_cycle"] = cycler.cycler(
 line_color_map = mpl.cm.gist_rainbow
 
 PLOTS_ARE_TESTED = False
+WINDMODEL_TEST = False
+EXCEPTION_FOR_MISSING_EVENTS = False
 
 STANDARD_PRESSURE = 101325.0  # The standard air pressure (1.01325 bar)
 METERS_PER_DEGREE_LATITUDE = 111325.0
@@ -134,9 +137,9 @@ def diana(directory, filename, config, output,
                                                          sim, rocket_components, random_parameters, False)
 
             result = run_simulation(orh, sim, config, parameterset)
-            if result.apogee:
-                results.append(result)
-                parametersets.append(parameterset)
+
+            results.append(result)
+            parametersets.append(parameterset)
 
         # the following functions rely on orhelper
         # -> run them before JVM is shut down
@@ -623,8 +626,16 @@ def get_apogee(open_rocket_helper, simulation, branch_number=0):
     try:
         ct_apogee = len(events[orhelper.FlightEvent.APOGEE])
         logging.info('# apogee events found: {}'.format(ct_apogee))
-
         t_apogee = events[orhelper.FlightEvent.APOGEE][0]
+    except BaseException:
+        if EXCEPTION_FOR_MISSING_EVENTS:
+            logging.warning('no apogee event found, search maximum within trajectory')
+            t_apogee = t[np.argmax(altitude)]
+        else:
+            logging.warning('no apogee event found, skip')
+            t_apogee = []
+
+    if t_apogee:
         apogee = open_rocket_helper.openrocket.util.WorldCoordinate(
             math.degrees(latitude[index_at(t_apogee)]),
             math.degrees(longitude[index_at(t_apogee)]),
@@ -634,8 +645,9 @@ def get_apogee(open_rocket_helper, simulation, branch_number=0):
             + "longitude {:.1f}°, ".format(apogee.getLatitudeDeg())
             + "latitude,{:.1f}°, ".format(apogee.getLongitudeDeg())
             + "altitude {:.1f}m".format(apogee.getAltitude()))
-    except BaseException:
-        logging.warning('no apogee found')
+    else:
+        apogee = []
+
     return apogee
 
 
@@ -660,28 +672,37 @@ def get_landing_site(open_rocket_helper, simulation, branch_number=0):
 
     # TODO how can I determine the stage triggering the flight event?
     events = open_rocket_helper.get_events(simulation)
-    # try:
-    ct_landings = len(events[orhelper.FlightEvent.GROUND_HIT])
-    logging.info('# ground hit events found: {}'.format(ct_landings))
+    try:
+        ct_landings = len(events[orhelper.FlightEvent.GROUND_HIT])
+        logging.info('# ground hit events found: {}'.format(ct_landings))
+        t_landing = events[orhelper.FlightEvent.GROUND_HIT][0]
+    except:
+        if EXCEPTION_FOR_MISSING_EVENTS:
+            logging.warning('no landing found, use last time instant')
+            t_landing = t[-1]
+        else:
+            logging.warning('no landing found, skip')
+            t_landing = []
 
-    t_landing = events[orhelper.FlightEvent.GROUND_HIT][0]
-    landing_world = open_rocket_helper.openrocket.util.WorldCoordinate(
-        math.degrees(latitude[index_at(t_landing)]),
-        math.degrees(longitude[index_at(t_landing)]),
-        altitude[index_at(t_landing)])
-    landing_cartesian = open_rocket_helper.openrocket.util.Coordinate(
-        position_x[index_at(t_landing)],
-        position_y[index_at(t_landing)],
-        altitude[index_at(t_landing)])
-    logging.info(
-        "Landing at {:.1f}s: ".format(t_landing)
-        + "longitude {:.1f}°, ".format(landing_world.getLatitudeDeg())
-        + "latitude,{:.1f}°, ".format(landing_world.getLongitudeDeg())
-        + "altitude {:.1f}m, ".format(landing_world.getAltitude())
-        + "pos_x {:.1f}m, ".format(landing_cartesian.x)
-        + "pos_y {:.1f}m".format(landing_cartesian.y))
-    # except:
-    #   logging.warning('no landing found')
+    if t_landing:
+        landing_world = open_rocket_helper.openrocket.util.WorldCoordinate(
+            math.degrees(latitude[index_at(t_landing)]),
+            math.degrees(longitude[index_at(t_landing)]),
+            altitude[index_at(t_landing)])
+        landing_cartesian = open_rocket_helper.openrocket.util.Coordinate(
+            position_x[index_at(t_landing)],
+            position_y[index_at(t_landing)],
+            altitude[index_at(t_landing)])
+        logging.info(
+            "Landing at {:.1f}s: ".format(t_landing)
+            + "longitude {:.1f}°, ".format(landing_world.getLatitudeDeg())
+            + "latitude,{:.1f}°, ".format(landing_world.getLongitudeDeg())
+            + "altitude {:.1f}m, ".format(landing_world.getAltitude())
+            + "pos_x {:.1f}m, ".format(landing_cartesian.x)
+            + "pos_y {:.1f}m".format(landing_cartesian.y))
+    else:
+        landing_world = []
+        landing_cartesian = []
 
     return landing_world, landing_cartesian
 
@@ -700,21 +721,26 @@ def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
         np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
 
     events = open_rocket_helper.get_events(simulation)
-    ct_ignitions = len(events[orhelper.FlightEvent.IGNITION])
-    logging.info('# ignition events found: {}'.format(ct_ignitions))
+    try:
+        ct_ignitions = len(events[orhelper.FlightEvent.IGNITION])
+        logging.info('# ignition events found: {}'.format(ct_ignitions))
 
-    if ct_ignitions > 0:
-        # normally we are interested in the latest ignition only
-        t_ignition = events[orhelper.FlightEvent.IGNITION][ct_ignitions - 1]
-        logging.info("Ignition at {:.1f}s: ".format(t_ignition))
-        theta_ignition = math.degrees(theta[index_at(t_ignition)])
-        altitude_ignition = altitude[index_at(t_ignition)]
-        logging.info("theta {:.1f}°, ".format(theta_ignition)
-                     + "altitude {:.1f}m, ".format(altitude_ignition))
-    else:
-        t_ignition = nan
+        if ct_ignitions > 0:
+            # normally we are interested in the latest ignition only
+            t_ignition = events[orhelper.FlightEvent.IGNITION][ct_ignitions - 1]
+            logging.info("Ignition at {:.1f}s: ".format(t_ignition))
+            theta_ignition = math.degrees(theta[index_at(t_ignition)])
+            altitude_ignition = altitude[index_at(t_ignition)]
+            logging.info("theta {:.1f}°, ".format(theta_ignition)
+                         + "altitude {:.1f}m, ".format(altitude_ignition))
+        else:
+            t_ignition = nan
+            theta_ignition = nan
+            phi_ignition = nan
+            altitude_ignition = nan
+    except:
+        logging.warning('no igntion found')
         theta_ignition = nan
-        phi_ignition = nan
         altitude_ignition = nan
 
     return theta_ignition, altitude_ignition
@@ -755,24 +781,26 @@ def print_statistics(results):
     distances = []
     bearings = []
     for landing_point in landing_points:
-        if geodetic_computation == geodetic_computation.FLAT:
-            distance, bearing = compute_distance_and_bearing_flat(
-                launch_point, landing_point)
-        elif geodetic_computation == geodetic_computation.WGS84:
-            geodesic = pyproj.Geod(ellps="WGS84")
-            fwd_azimuth, back_azimuth, distance = geodesic.inv(
-                launch_point.getLongitudeDeg(),
-                launch_point.getLatitudeDeg(),
-                landing_point.getLongitudeDeg(),
-                landing_point.getLatitudeDeg())
-            bearing = np.radians(fwd_azimuth)
+        if landing_point:
+            if geodetic_computation == geodetic_computation.FLAT:
+                distance, bearing = compute_distance_and_bearing_flat(
+                    launch_point, landing_point)
+            elif geodetic_computation == geodetic_computation.WGS84:
+                geodesic = pyproj.Geod(ellps="WGS84")
+                fwd_azimuth, back_azimuth, distance = geodesic.inv(
+                    launch_point.getLongitudeDeg(),
+                    launch_point.getLatitudeDeg(),
+                    landing_point.getLongitudeDeg(),
+                    landing_point.getLatitudeDeg())
+                bearing = np.radians(fwd_azimuth)
 
-        distances.append(distance)
-        bearings.append(bearing)
+            distances.append(distance)
+            bearings.append(bearing)
 
     max_altitude = []
     for apogee in apogees:
-        max_altitude.append(apogee.getAltitude())
+        if apogee:
+            max_altitude.append(apogee.getAltitude())
 
     logging.debug("distances and bearings in polar coordinates")
     logging.debug(distances)
@@ -805,17 +833,52 @@ def export_results(results, parametersets, output_filename):
                                "tilt / deg", "azimuth / deg",
                                "thrust_factor / 1"])
         for r, p in zip(results, parametersets):
-            resultwriter.writerow([r.landing_point_world.getLatitudeDeg(),
-                                   r.landing_point_world.getLongitudeDeg(),
-                                   r.landing_point_cartesian.x,
-                                   r.landing_point_cartesian.y,
-                                   r.apogee.getAltitude(),
-                                   r.theta_ignition,
-                                   r.altitude_ignition,
-                                   p.tilt,
-                                   p.azimuth,
-                                   p.thrust_factor])
+            if r.landing_point_world:
+                # valid solution
+                resultwriter.writerow([
+                    r.landing_point_world.getLatitudeDeg(),
+                    r.landing_point_world.getLongitudeDeg(),
+                    r.landing_point_cartesian.x,
+                    r.landing_point_cartesian.y,
+                    r.apogee.getAltitude(),
+                    r.theta_ignition,
+                    r.altitude_ignition,
+                    p.tilt,
+                    p.azimuth,
+                    p.thrust_factor])
+            elif r.apogee:
+                resultwriter.writerow([
+                    0,0,0,0,
+                    r.apogee.getAltitude(),0,0,
+                    p.tilt,
+                    p.azimuth,
+                    p.thrust_factor])
+            else:
+                resultwriter.writerow([
+                    0,0,0,0,0,0,0,
+                    p.tilt,
+                    p.azimuth,
+                    p.thrust_factor])
 
+    print("print kml")
+    kml = simplekml.Kml()
+    style = simplekml.Style()
+    style.labelstyle.color = simplekml.Color.yellow  # color the text
+    style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
+
+    pnt = kml.newpoint(name = "Launch")
+    pnt.coords=[(
+        results[0].launch_point.getLongitudeDeg(),
+        results[0].launch_point.getLatitudeDeg())]
+
+    for r in results:
+        if r.landing_point_world:
+            pnt = kml.newpoint()
+            pnt.coords=[(
+                r.landing_point_world.getLongitudeDeg(),
+                r.landing_point_world.getLatitudeDeg())]
+            pnt.style = style
+    kml.save(output_filename + "_landingscatter.kml")
 
 def compute_distance_and_bearing_flat(from_, to):
     """Return distance and bearing betweeen two points.
@@ -854,14 +917,16 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
         If Coordinate type is not "flat" or "wgs84".
     """
     def to_array_world(coordinate):
-        return np.array([coordinate.getLatitudeDeg(),
-                        coordinate.getLongitudeDeg(),
-                        coordinate.getAltitude()])
+        if coordinate:
+            return np.array([coordinate.getLatitudeDeg(),
+                            coordinate.getLongitudeDeg(),
+                            coordinate.getAltitude()])
 
     def to_array_cartesian(coordinate):
-        return np.array([coordinate.x,
-                        coordinate.y,
-                        coordinate.z])
+        if coordinate:
+            return np.array([coordinate.x,
+                            coordinate.y,
+                            coordinate.z])
 
     if PLOTS_ARE_TESTED:
         # Test Data
@@ -877,16 +942,19 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
         geodetic_computation = 'flat'
     else:
         landing_points_world = np.array(
-            [to_array_world(r.landing_point_world) for r in results])
+            [to_array_world(r.landing_point_world) for r in results if r.landing_point_world])
         landing_points_cartesian = np.array(
-            [to_array_cartesian(r.landing_point_cartesian) for r in results])
+            [to_array_cartesian(r.landing_point_cartesian) for r in results if r.landing_point_cartesian])
         launch_point = to_array_world(results[0].launch_point)
         geodetic_computation = results[0].geodetic_computation
-        apogees = np.array([to_array_world(r.apogee) for r in results])
+        apogees = np.array([to_array_world(r.apogee) for r in results if r.apogee])
         trajectories = [r.trajectory for r in results]
         ignitions_theta = [r.theta_ignition for r in results]
         ignitions_altitude = [r.altitude_ignition for r in results]
     n_simulations = apogees.shape[0]
+    if n_simulations < 1:
+        logging.warning("No landing points found")
+        return
 
     fig = plt.figure(constrained_layout=True)
     # TODO: Increase pad on the right
