@@ -560,18 +560,20 @@ def plot_wind_model(wind_model_file):
     alt_rng = np.arange(-1, 20e3, 1e2)
 
     # spline via NE
-    tck_north = scipy.interpolate.splrep(altitudes_m, wind_speeds_north_mps, s=0)
+    tck_north = scipy.interpolate.splrep(
+        altitudes_m, wind_speeds_north_mps, s=0)
     tck_east = scipy.interpolate.splrep(altitudes_m, wind_speeds_east_mps, s=0)
-    interpolate_wind_speed_north_mps = lambda alt: scipy.interpolate.splev(
+
+    def interpolate_wind_speed_north_mps(alt): return scipy.interpolate.splev(
         alt, tck_north, der=0, ext=3)
-    interpolate_wind_speed_east_mps = lambda alt: scipy.interpolate.splev(
+    def interpolate_wind_speed_east_mps(alt): return scipy.interpolate.splev(
         alt, tck_east, der=0, ext=3)
     wind_north_plt_spline = interpolate_wind_speed_north_mps(alt_rng)
     wind_east_plt_spline = interpolate_wind_speed_east_mps(alt_rng)
     wind_speed_mps_ne_plt_spline = np.sqrt(wind_north_plt_spline * wind_north_plt_spline
-                           + wind_east_plt_spline * wind_east_plt_spline)
+                                           + wind_east_plt_spline * wind_east_plt_spline)
     wind_direction_rad_ne_plt_spline = np.unwrap(np.arctan2(
-    wind_east_plt_spline, wind_north_plt_spline))
+        wind_east_plt_spline, wind_north_plt_spline))
 
     # linear via NE
     interpolate_wind_speed_north_mps = scipy.interpolate.interp1d(
@@ -583,9 +585,9 @@ def plot_wind_model(wind_model_file):
     wind_north_plt_linear = interpolate_wind_speed_north_mps(alt_rng)
     wind_east_plt_linear = interpolate_wind_speed_east_mps(alt_rng)
     wind_speed_mps_ne_plt_linear = np.sqrt(wind_north_plt_linear * wind_north_plt_linear
-                           + wind_east_plt_linear * wind_east_plt_linear)
+                                           + wind_east_plt_linear * wind_east_plt_linear)
     wind_direction_rad_ne_plt_linear = np.unwrap(np.arctan2(
-    wind_east_plt_linear, wind_north_plt_linear))
+        wind_east_plt_linear, wind_north_plt_linear))
 
     # spline, wind speed + dir direct
     tck_speed = scipy.interpolate.splrep(altitudes_m, wind_speeds_mps, s=0)
@@ -611,24 +613,73 @@ def plot_wind_model(wind_model_file):
         altitudes_m, wind_speeds_east_mps, extrapolate=True)
     wind_east_plt_pchip = wind_east_plt_pchip_fct(alt_rng)
     wind_speed_mps_ne_plt_pchip = np.sqrt(wind_north_plt_pchip * wind_north_plt_pchip
-                           + wind_east_plt_pchip * wind_east_plt_pchip)
+                                          + wind_east_plt_pchip * wind_east_plt_pchip)
     wind_direction_rad_ne_plt_pchip = np.unwrap(np.arctan2(
-    wind_east_plt_pchip, wind_north_plt_pchip))
+        wind_east_plt_pchip, wind_north_plt_pchip))
 
     axs[0].plot(altitudes_m, wind_speeds_mps, 'o', label="model")
-    axs[0].plot(alt_rng, wind_speed_mps_ne_plt_linear, color="r", label="linear via NE")
-    axs[0].plot(alt_rng, wind_speed_mps_ne_plt_spline, color="g",label="spline via NE")
-    axs[0].plot(alt_rng, wind_speed_mps_ne_plt_pchip, color="b", label="pchip via NE")
-    axs[0].plot(alt_rng, wind_speed_plt_spline, color="g", label="spline direct")
+    axs[0].plot(
+        alt_rng,
+        wind_speed_mps_ne_plt_linear,
+        color="r",
+        label="linear via NE")
+    axs[0].plot(
+        alt_rng,
+        wind_speed_mps_ne_plt_spline,
+        color="g",
+        label="spline via NE")
+    axs[0].plot(
+        alt_rng,
+        wind_speed_mps_ne_plt_pchip,
+        color="b",
+        label="pchip via NE")
+    axs[0].plot(
+        alt_rng,
+        wind_speed_plt_spline,
+        color="g",
+        label="spline direct")
     axs[0].plot(alt_rng, wind_speed_plt_pchip, color="b", label="pchip direct")
     axs[0].set_ylabel("speed / ms")
     axs[0].legend()
-    axs[1].plot(altitudes_m, np.degrees(wind_directions_rad), 'o', label="model")
-    axs[1].plot(alt_rng, np.degrees(wind_direction_rad_ne_plt_linear + 2*np.pi), color="r", label="linear via NE")
-    axs[1].plot(alt_rng, np.degrees(wind_direction_rad_ne_plt_spline + 2*np.pi), color="g",label="spline via NE")
-    axs[1].plot(alt_rng, np.degrees(wind_direction_rad_ne_plt_pchip + 2*np.pi), color="b", label="pchip via NE")
-    axs[1].plot(alt_rng, np.degrees(wind_dir_plt_spline), color="g", label="spline direct")
-    axs[1].plot(alt_rng, np.degrees(wind_dir_plt_pchip), color="b", label="pchip direct")
+    axs[1].plot(
+        altitudes_m,
+        np.degrees(wind_directions_rad),
+        'o',
+        label="model")
+    axs[1].plot(
+        alt_rng,
+        np.degrees(
+            wind_direction_rad_ne_plt_linear +
+            2 *
+            np.pi),
+        color="r",
+        label="linear via NE")
+    axs[1].plot(
+        alt_rng,
+        np.degrees(
+            wind_direction_rad_ne_plt_spline +
+            2 *
+            np.pi),
+        color="g",
+        label="spline via NE")
+    axs[1].plot(
+        alt_rng,
+        np.degrees(
+            wind_direction_rad_ne_plt_pchip +
+            2 *
+            np.pi),
+        color="b",
+        label="pchip via NE")
+    axs[1].plot(
+        alt_rng,
+        np.degrees(wind_dir_plt_spline),
+        color="g",
+        label="spline direct")
+    axs[1].plot(
+        alt_rng,
+        np.degrees(wind_dir_plt_pchip),
+        color="b",
+        label="pchip direct")
     axs[1].set_ylabel("direction / deg")
     axs[1].legend()
 
@@ -638,7 +689,7 @@ def plot_wind_model(wind_model_file):
 class WindListener(orhelper.AbstractSimulationListener):
     """Set the wind speed as a function of altitude."""
 
-    def __init__(self, wind_model_file="", interpolation_method = "linear"):
+    def __init__(self, wind_model_file="", interpolation_method="linear"):
         """Read wind level model data from file.
 
         Save them as interpolation functions to be used in other
@@ -693,8 +744,10 @@ class WindListener(orhelper.AbstractSimulationListener):
                 altitudes_m, wind_speeds_east_mps, bounds_error=False,
                 fill_value=(wind_speeds_east_mps[0], wind_speeds_east_mps[-1]))
         elif interpolation_method == "spline":
-            tck_north = scipy.interpolate.splrep(altitudes_m, wind_speeds_north_mps, s=0)
-            tck_east = scipy.interpolate.splrep(altitudes_m, wind_speeds_east_mps, s=0)
+            tck_north = scipy.interpolate.splrep(
+                altitudes_m, wind_speeds_north_mps, s=0)
+            tck_east = scipy.interpolate.splrep(
+                altitudes_m, wind_speeds_east_mps, s=0)
             self.interpolate_wind_speed_north_mps = lambda alt: scipy.interpolate.splev(
                 alt, tck_north, der=0, ext=3)
             self.interpolate_wind_speed_east_mps = lambda alt: scipy.interpolate.splev(
@@ -711,8 +764,7 @@ class WindListener(orhelper.AbstractSimulationListener):
 
         # pchip does not have an option to constrain to min/max values
         self.constrain_altitude = lambda alt: max([altitudes_m[1],
-            min([alt, altitudes_m[-1]])])
-
+                                                   min([alt, altitudes_m[-1]])])
 
     def preWindModel(self, status):
         """Set the wind coordinates at every simulation step."""
@@ -725,7 +777,7 @@ class WindListener(orhelper.AbstractSimulationListener):
         wind_speed_east_mps = self.interpolate_wind_speed_east_mps(
             self.constrain_altitude(position.z))
         logging.info("Wind: alt {}m, N {}m/s, E {}m/s".format(position.z,
-            wind_speed_north_mps, wind_speed_east_mps))
+                                                              wind_speed_north_mps, wind_speed_east_mps))
         wind_speed_mps = math.sqrt(wind_speed_north_mps * wind_speed_north_mps
                                    + wind_speed_east_mps * wind_speed_east_mps)
         wind_direction_rad = math.atan2(
@@ -769,7 +821,8 @@ def get_apogee(open_rocket_helper, simulation, branch_number=0):
         t_apogee = events[orhelper.FlightEvent.APOGEE][0]
     except BaseException:
         if EXCEPTION_FOR_MISSING_EVENTS:
-            logging.warning('no apogee event found, search maximum within trajectory')
+            logging.warning(
+                'no apogee event found, search maximum within trajectory')
             t_apogee = t[np.argmax(altitude)]
         else:
             logging.warning('no apogee event found, skip')
@@ -816,7 +869,7 @@ def get_landing_site(open_rocket_helper, simulation, branch_number=0):
         ct_landings = len(events[orhelper.FlightEvent.GROUND_HIT])
         logging.info('# ground hit events found: {}'.format(ct_landings))
         t_landing = events[orhelper.FlightEvent.GROUND_HIT][0]
-    except:
+    except BaseException:
         if EXCEPTION_FOR_MISSING_EVENTS:
             logging.warning('no landing found, use last time instant')
             t_landing = t[-1]
@@ -878,7 +931,7 @@ def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
             theta_ignition = nan
             phi_ignition = nan
             altitude_ignition = nan
-    except:
+    except BaseException:
         logging.warning('no igntion found')
         theta_ignition = nan
         altitude_ignition = nan
@@ -988,14 +1041,14 @@ def export_results(results, parametersets, output_filename):
                     p.thrust_factor])
             elif r.apogee:
                 resultwriter.writerow([
-                    0,0,0,0,
-                    r.apogee.getAltitude(),0,0,
+                    0, 0, 0, 0,
+                    r.apogee.getAltitude(), 0, 0,
                     p.tilt,
                     p.azimuth,
                     p.thrust_factor])
             else:
                 resultwriter.writerow([
-                    0,0,0,0,0,0,0,
+                    0, 0, 0, 0, 0, 0, 0,
                     p.tilt,
                     p.azimuth,
                     p.thrust_factor])
@@ -1006,19 +1059,20 @@ def export_results(results, parametersets, output_filename):
     style.labelstyle.color = simplekml.Color.yellow  # color the text
     style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
 
-    pnt = kml.newpoint(name = "Launch")
-    pnt.coords=[(
+    pnt = kml.newpoint(name="Launch")
+    pnt.coords = [(
         results[0].launch_point.getLongitudeDeg(),
         results[0].launch_point.getLatitudeDeg())]
 
     for r in results:
         if r.landing_point_world:
             pnt = kml.newpoint()
-            pnt.coords=[(
+            pnt.coords = [(
                 r.landing_point_world.getLongitudeDeg(),
                 r.landing_point_world.getLatitudeDeg())]
             pnt.style = style
     kml.save(output_filename + "_landingscatter.kml")
+
 
 def compute_distance_and_bearing_flat(from_, to):
     """Return distance and bearing betweeen two points.
@@ -1087,7 +1141,8 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
             [to_array_cartesian(r.landing_point_cartesian) for r in results if r.landing_point_cartesian])
         launch_point = to_array_world(results[0].launch_point)
         geodetic_computation = results[0].geodetic_computation
-        apogees = np.array([to_array_world(r.apogee) for r in results if r.apogee])
+        apogees = np.array([to_array_world(r.apogee)
+                           for r in results if r.apogee])
         trajectories = [r.trajectory for r in results]
         ignitions_theta = [r.theta_ignition for r in results]
         ignitions_altitude = [r.altitude_ignition for r in results]
