@@ -395,38 +395,60 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
     :return:
         A tuple containing (landing_point_world, launch_position,
         geodetic_computation, apogee, trajectory, landing_point_cartesian)
+
+    :raise ValueError:
+        If the geodetic computation is not flat or WGS84
     """
     wind_listener = WindListener(config["WindModel"]["DataFile"], "linear")
     launch_point_listener = LaunchPointListener()
-    landing_point_listener = LandingPointListener()
     motor_listener = MotorListener(
         parameterset.thrust_factor,
         float(config["Propulsion"]["NozzleCrossSection"]))
 
     orh.run_simulation(
         sim, listeners=(launch_point_listener,
-                        landing_point_listener,
                         wind_listener,
                         motor_listener))
 
-    """
-    (from OR code) simulation_exception:
-    the exception that caused ending the simulation, or <code>null</code> if
-    ending normally.
-    """
-    if landing_point_listener.simulation_exception is None:
+    # see if there were any warnings
+    simulated_warnings = sim.getSimulatedWarnings()
+    if simulated_warnings is not None:
+        for warning in simulated_warnings:
+            # yes, we know that we use listeners
+            if not warning.equals(
+                    orh.openrocket.aerodynamics.Warning.LISTENERS_AFFECTED):
+                logging.info(warning)
+
+    # was there any exception thrown?
+    simulation_exception_raised = False
+    events = sim.getSimulatedData().getBranch(0).getEvents()
+    for ev in events:
+        if ev.getType() == ev.Type.EXCEPTION:
+            simulation_exception_raised = True
+
+    # TODO parse that outside of run_simulation
+    conditions = sim.getSimulatedConditions()
+    geodetic_computation = conditions.getGeodeticComputation()
+    logging.info("Geodetic computation {} found.".format(geodetic_computation))
+    computation_is_supported = (
+        geodetic_computation == geodetic_computation.FLAT
+        or geodetic_computation == geodetic_computation.WGS84)
+    if not computation_is_supported:
+        raise ValueError("GeodeticComputationStrategy type not supported!")
+
+    # extract trajectory in any case, but other results only if simulation
+    # did not throw any exception
+    trajectory = get_trajectory(orh, sim, branch_number)
+    if not simulation_exception_raised:
         apogee = get_apogee(orh, sim, branch_number)
-        trajectory = get_trajectory(orh, sim, branch_number)
         landing_world, landing_cartesian = get_landing_site(
             orh, sim, branch_number)
         theta_ignition, altitude_ignition = get_ignition_tilt(
             orh, sim, branch_number)
     else:
         logging.warning(
-            "Simulation threw the exception " +
-            landing_point_listener.simulation_exception.args[0])
+            "Simulation threw an exception")
         apogee = []
-        trajectory = []
         landing_world = []
         landing_cartesian = []
         theta_ignition = []
@@ -443,7 +465,7 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
         "altitude_ignition"])
     r = Results(landing_point_world=landing_world,
                 launch_point=launch_point_listener.launch_point,
-                geodetic_computation=launch_point_listener.geodetic_computation,
+                geodetic_computation=geodetic_computation,
                 apogee=apogee,
                 trajectory=trajectory,
                 landing_point_cartesian=landing_cartesian,
@@ -458,43 +480,14 @@ class LaunchPointListener(orhelper.AbstractSimulationListener):
 
     def __init__(self):
         self.launch_point = None
-        self.geodetic_computation = None
 
     def startSimulation(self, status):
         """Analyze the simulation conditions of OpenRocket.
 
-        These are the launch point and if a supported geodetic model is
-        set.
-
-        :raise ValueError:
-            If the geodetic computation is not flat or WGS84
+        These are the launch point-
         """
         conditions = status.getSimulationConditions()
         self.launch_point = conditions.getLaunchSite()
-
-        self.geodetic_computation = conditions.getGeodeticComputation()
-        logging.debug(self.geodetic_computation)
-        computation_is_supported = (
-            self.geodetic_computation == self.geodetic_computation.FLAT
-            or self.geodetic_computation == self.geodetic_computation.WGS84)
-        if not computation_is_supported:
-            raise ValueError("GeodeticComputationStrategy type not supported!")
-
-
-class LandingPointListener(orhelper.AbstractSimulationListener):
-    """Return the simulation_exception at the ``endSimulation`` callback."""
-
-    def __init__(self):
-        self.simulation_exception = None
-
-    def endSimulation(self, status, simulation_exception):
-        """Return the landing position from OpenRocket and check exceptions
-
-        (from OR code) simulation_exception:
-        the exception that caused ending the simulation, or <code>null</code> if
-        ending normally.
-        """
-        self.simulation_exception = simulation_exception
 
 
 class MotorListener(orhelper.AbstractSimulationListener):
@@ -777,7 +770,7 @@ class WindListener(orhelper.AbstractSimulationListener):
         wind_speed_east_mps = self.interpolate_wind_speed_east_mps(
             self.constrain_altitude(position.z))
         logging.debug("Wind: alt {}m, N {}m/s, E {}m/s".format(position.z,
-                                                              wind_speed_north_mps, wind_speed_east_mps))
+                                                               wind_speed_north_mps, wind_speed_east_mps))
         wind_speed_mps = math.sqrt(wind_speed_north_mps * wind_speed_north_mps
                                    + wind_speed_east_mps * wind_speed_east_mps)
         wind_direction_rad = math.atan2(
@@ -968,7 +961,8 @@ def print_statistics(results):
     geodetic_computation = results[0].geodetic_computation
     apogees = [r.apogee for r in results]
     ignitions_theta = [r.theta_ignition for r in results if r.theta_ignition]
-    ignitions_altitude = [r.altitude_ignition for r in results if r.altitude_ignition]
+    ignitions_altitude = [
+        r.altitude_ignition for r in results if r.altitude_ignition]
 
     logging.debug("Results: distances in cartesian coordinates")
     distances = []
