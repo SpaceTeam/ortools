@@ -723,13 +723,13 @@ class WindListener(orhelper.AbstractSimulationListener):
                 + "`wind_directions_degree` and `wind_speeds_mps` must be "
                 + "of the same length.")
 
-        logging.info("Input wind levels model data:")
-        logging.info("Altitude (m) ")
-        logging.info(altitudes_m)
-        logging.info("Direction (°) ")
-        logging.info(wind_directions_degree)
-        logging.info("Wind speed (m/s) ")
-        logging.info(wind_speeds_mps)
+        logging.debug("Input wind levels model data:")
+        logging.debug("Altitude (m) ")
+        logging.debug(altitudes_m)
+        logging.debug("Direction (°) ")
+        logging.debug(wind_directions_degree)
+        logging.debug("Wind speed (m/s) ")
+        logging.debug(wind_speeds_mps)
 
         # assume that the intermediate values of a rotation of the wind by 180° is zero
         # instead of the same magnitude and 90° rotaion ->
@@ -776,7 +776,7 @@ class WindListener(orhelper.AbstractSimulationListener):
             self.constrain_altitude(position.z))
         wind_speed_east_mps = self.interpolate_wind_speed_east_mps(
             self.constrain_altitude(position.z))
-        logging.info("Wind: alt {}m, N {}m/s, E {}m/s".format(position.z,
+        logging.debug("Wind: alt {}m, N {}m/s, E {}m/s".format(position.z,
                                                               wind_speed_north_mps, wind_speed_east_mps))
         wind_speed_mps = math.sqrt(wind_speed_north_mps * wind_speed_north_mps
                                    + wind_speed_east_mps * wind_speed_east_mps)
@@ -918,7 +918,7 @@ def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
         ct_ignitions = len(events[orhelper.FlightEvent.IGNITION])
         logging.info('# ignition events found: {}'.format(ct_ignitions))
 
-        if ct_ignitions > 0:
+        if ct_ignitions > 1:
             # normally we are interested in the latest ignition only
             t_ignition = events[orhelper.FlightEvent.IGNITION][ct_ignitions - 1]
             logging.info("Ignition at {:.1f}s: ".format(t_ignition))
@@ -932,7 +932,7 @@ def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
             phi_ignition = nan
             altitude_ignition = nan
     except BaseException:
-        logging.warning('no igntion found')
+        logging.warning('no ignition found')
         theta_ignition = nan
         altitude_ignition = nan
 
@@ -967,8 +967,8 @@ def print_statistics(results):
     launch_point = results[0].launch_point
     geodetic_computation = results[0].geodetic_computation
     apogees = [r.apogee for r in results]
-    ignitions_theta = [r.theta_ignition for r in results]
-    ignitions_altitude = [r.altitude_ignition for r in results]
+    ignitions_theta = [r.theta_ignition for r in results if r.theta_ignition]
+    ignitions_altitude = [r.altitude_ignition for r in results if r.altitude_ignition]
 
     logging.debug("Results: distances in cartesian coordinates")
     distances = []
@@ -1008,12 +1008,14 @@ def print_statistics(results):
             np.mean(distances), np.std(distances))
         + "bearing {:.1f}° ± {:.1f}° ".format(
             np.degrees(np.mean(bearings)), np.degrees(np.std(bearings))))
-    print("Ignition at altitude: {:.1f}m ± {:.2f}m ".format(
-        np.mean(ignitions_altitude), np.std(ignitions_altitude)))
-    print(" at tilt angle: {:.1f}° ± {:.2f}° ".format(
-        np.mean(ignitions_theta), np.std(ignitions_theta)))
-    print("Based on {} simulations.".format(
-        len(landing_points)))
+    if ignitions_theta:
+        print("Ignition at altitude: {:.1f}m ± {:.2f}m ".format(
+            np.mean(ignitions_altitude), np.std(ignitions_altitude)))
+        print(" at tilt angle: {:.1f}° ± {:.2f}° ".format(
+            np.mean(ignitions_theta), np.std(ignitions_theta)))
+
+    print("Based on {} valid simulation(s) of {}.".format(
+        len(distances), len(landing_points)))
 
 
 def export_results(results, parametersets, output_filename):
@@ -1053,7 +1055,6 @@ def export_results(results, parametersets, output_filename):
                     p.azimuth,
                     p.thrust_factor])
 
-    print("print kml")
     kml = simplekml.Kml()
     style = simplekml.Style()
     style.labelstyle.color = simplekml.Color.yellow  # color the text
