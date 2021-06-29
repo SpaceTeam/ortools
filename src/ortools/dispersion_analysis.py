@@ -178,7 +178,11 @@ def diana(directory, filename, config, output,
         # -> run them before JVM is shut down
         t2 = time.time()
         print_statistics(results, general_parameters)
-        export_results(results, parametersets, general_parameters, output_filename)
+        export_results(
+            results,
+            parametersets,
+            general_parameters,
+            output_filename)
         t3 = time.time()
         print("---")
         print("time for {} simulations = {:.1f}s".format(n_simulations,
@@ -245,8 +249,33 @@ def set_up_random_parameters(orh, sim, config):
     parachute_cd_stddev = float(config["Aerodynamics"]["ParachuteCd"])
     roughness_stddev = float(config["Aerodynamics"]["Roughness"])
 
-    # get rocket data
+    mcid = options.getMotorConfigurationID()
+    rocket = options.getRocket()
+    num_stages = rocket.getChildCount()
+    stages = []
+    stage_separation_delay_max = []
+    stage_separation_delay_min = []
+    for stage_nr in range(1, num_stages):
+        stages.append(rocket.getChild(stage_nr))
+        separationEventConfiguration = rocket.getChild(
+            stage_nr).getStageSeparationConfiguration().get(mcid)
+        separationDelay = separationEventConfiguration.getSeparationDelay()
+        if config.has_section("Staging") and config.has_option(
+                "Staging", "StageSeparationDelayDeltaNeg") and config.has_option("Staging", "StageSeparationDelayDeltaPos"):
+            # TODO set motor burnout of booster stage as lower minimum, and
+            # motor ignition of upper stage as maximum
+            stage_separation_delay_min.append(separationDelay + float(
+                config["Staging"]["StageSeparationDelayDeltaNeg"]))
+            stage_separation_delay_max.append(separationDelay + float(
+                config["Staging"]["StageSeparationDelayDeltaPos"]))
+        else:
+            stage_separation_delay_max.append(separationDelay)
+            stage_separation_delay_min.append(separationDelay)
+
+    # get simulation data
     opts = sim.getOptions()
+
+    # get rocket data
     rocket = opts.getRocket()
 
     # TODO: Move the components into its own function get_components()
@@ -293,12 +322,14 @@ def set_up_random_parameters(orh, sim, config):
     RocketComponents = collections.namedtuple("RocketComponents", [
         "fin_sets",
         "parachutes",
-        "external_components"])
+        "external_components",
+        "stages"])
     rng = np.random.default_rng()
     RandomParameters = collections.namedtuple("RandomParameters", [
         "tilt",
         "azimuth",
         "thrust_factor",
+        "stage_separation",
         "fin_cants",
         "parachutes_cd",
         "roughnesses"])
@@ -306,11 +337,16 @@ def set_up_random_parameters(orh, sim, config):
         RocketComponents(
             fin_sets=components_fin_sets,
             parachutes=components_parachutes,
-            external_components=components_external_components),
+            external_components=components_external_components,
+            stages=stages),
         RandomParameters(
             tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
             azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
             thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
+            stage_separation=lambda: [rng.uniform(min,
+                                                  max) for (min, max) in zip(
+                stage_separation_delay_max,
+                stage_separation_delay_min)],
             fin_cants=lambda: [rng.normal(mean, fincant_stddev)
                                for mean in fin_cant_means],
             parachutes_cd=lambda: [
@@ -330,6 +366,18 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     # Otherwise launch rod direction cannot be altered
     options.setLaunchIntoWind(False)
     options.setLaunchRodDirection(random_parameters.azimuth())
+
+    # set stage sepration
+    mcid = options.getMotorConfigurationID()
+    rocket = options.getRocket()
+    num_stages = rocket.getChildCount()
+    for (stage, stage_separation_delay) in zip(
+            rocket_components.stages, random_parameters.stage_separation()):
+        separationEventConfiguration = stage.getStageSeparationConfiguration().get(mcid)
+        logging.info(
+            "Set separation delay of stage {}".format(stage))
+        separationEventConfiguration.setSeparationDelay(
+            stage_separation_delay)
 
     # There can be more than one finset -> add unbiased
     # normaldistributed value
@@ -408,14 +456,27 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
     logging.info("Launch rail azimuth = {:6.2f}°".format(azimuth))
     logging.info("Thrust factor = {:6.2f}".format(thrust_factor))
 
+    # stage sepration
+    mcid = options.getMotorConfigurationID()
+    rocket = options.getRocket()
+    separationDelays = []
+    for stage in rocket_components.stages:
+        separationEventConfiguration = stage.getStageSeparationConfiguration().get(mcid)
+        separationDelays.append(
+            separationEventConfiguration.getSeparationDelay())
+        logging.info("Separation delay of stage {} = {:6.2f}s".format(
+            stage, separationDelays[-1]))
+
     Parameters = collections.namedtuple("Parameters", [
         "tilt",
         "azimuth",
-        "thrust_factor"])
+        "thrust_factor",
+        "separation_delay"])
     return Parameters(
         tilt=tilt,
         azimuth=azimuth,
-        thrust_factor=thrust_factor)
+        thrust_factor=thrust_factor,
+        separation_delay=separationDelays)
 
 
 def run_simulation(orh, sim, config, parameterset, branch_number=0):
@@ -443,7 +504,7 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
                     orh.openrocket.aerodynamics.Warning.LISTENERS_AFFECTED):
                 logging.info(warning)
 
-    # was there any exception thrown?
+    # was there any exception thrown? only main branch is considered
     simulation_exception_raised = False
     events = sim.getSimulatedData().getBranch(0).getEvents()
     for ev in events:
@@ -1007,7 +1068,8 @@ def print_statistics(results, general_parameters):
         len(distances), len(landing_points)))
 
 
-def export_results(results, parametersets, general_parameters, output_filename):
+def export_results(results, parametersets,
+                   general_parameters, output_filename):
     """Create csv with all simulation results and its global parameterset."""
     with open(output_filename + ".csv", 'w', newline='') as csvfile:
         resultwriter = csv.writer(csvfile, delimiter=',')
@@ -1015,7 +1077,7 @@ def export_results(results, parametersets, general_parameters, output_filename):
                                "landing x / m", "landing y /m", "apogee / m",
                                "ignition theta / deg", "ignition altitude / m",
                                "tilt / deg", "azimuth / deg",
-                               "thrust_factor / 1"])
+                               "thrust_factor / 1", "stage separation delay / s"])
         for r, p in zip(results, parametersets):
             if r.landing_point_world:
                 # valid solution
@@ -1029,20 +1091,23 @@ def export_results(results, parametersets, general_parameters, output_filename):
                     r.altitude_ignition,
                     p.tilt,
                     p.azimuth,
-                    p.thrust_factor])
+                    p.thrust_factor,
+                    p.separation_delay])
             elif r.apogee:
                 resultwriter.writerow([
                     0, 0, 0, 0,
                     r.apogee.getAltitude(), 0, 0,
                     p.tilt,
                     p.azimuth,
-                    p.thrust_factor])
+                    p.thrust_factor,
+                    p.separation_delay])
             else:
                 resultwriter.writerow([
                     0, 0, 0, 0, 0, 0, 0,
                     p.tilt,
                     p.azimuth,
-                    p.thrust_factor])
+                    p.thrust_factor,
+                    p.separation_delay])
 
     kml = simplekml.Kml()
     style = simplekml.Style()
