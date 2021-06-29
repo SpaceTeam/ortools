@@ -163,11 +163,13 @@ def diana(directory, filename, config, output,
                 randomize_simulation(orh, sim, rocket_components,
                                      random_parameters)
                 parameterset = get_simulation_parameters(orh,
-                                                         sim, rocket_components, random_parameters, True)
+                                                         sim, rocket_components,
+                                                         random_parameters, True)
             else:
                 print("with nominal parameter set but wind-model applied")
                 parameterset = get_simulation_parameters(orh,
-                                                         sim, rocket_components, random_parameters, False)
+                                                         sim, rocket_components,
+                                                         random_parameters, False)
 
             result = run_simulation(orh, sim, config, parameterset)
 
@@ -467,16 +469,30 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
         logging.info("Separation delay of stage {} = {:6.2f}s".format(
             stage, separationDelays[-1]))
 
+    fin_cants = []
+    for fins in rocket_components.fin_sets:
+        fin_cants.append(math.degrees(fins.getCantAngle()))
+
+    # There can be more than one parachute -> add unbiased
+    # normaldistributed value
+    parachute_cds = []
+    for parachute in rocket_components.parachutes:
+            parachute_cds.append(parachute.getCD())
+
     Parameters = collections.namedtuple("Parameters", [
         "tilt",
         "azimuth",
         "thrust_factor",
-        "separation_delay"])
+        "separation_delay",
+        "fin_cants",
+        "parachute_cds"])
     return Parameters(
         tilt=tilt,
         azimuth=azimuth,
         thrust_factor=thrust_factor,
-        separation_delay=separationDelays)
+        separation_delay=separationDelays,
+        fin_cants = fin_cants,
+        parachute_cds = parachute_cds)
 
 
 def run_simulation(orh, sim, config, parameterset, branch_number=0):
@@ -1077,7 +1093,8 @@ def export_results(results, parametersets,
                                "landing x / m", "landing y /m", "apogee / m",
                                "ignition theta / deg", "ignition altitude / m",
                                "tilt / deg", "azimuth / deg",
-                               "thrust_factor / 1", "stage separation delay / s"])
+                               "thrust_factor / 1", "stage separation delay / s",
+                               "fin cant / °", "parachute CD / 1"])
         for r, p in zip(results, parametersets):
             if r.landing_point_world:
                 # valid solution
@@ -1092,7 +1109,9 @@ def export_results(results, parametersets,
                     p.tilt,
                     p.azimuth,
                     p.thrust_factor,
-                    p.separation_delay])
+                    p.separation_delay,
+                    p.fin_cants,
+                    p.parachute_cds])
             elif r.apogee:
                 resultwriter.writerow([
                     0, 0, 0, 0,
@@ -1100,14 +1119,18 @@ def export_results(results, parametersets,
                     p.tilt,
                     p.azimuth,
                     p.thrust_factor,
-                    p.separation_delay])
+                    p.separation_delay,
+                    p.fin_cants,
+                    p.parachute_cds])
             else:
                 resultwriter.writerow([
                     0, 0, 0, 0, 0, 0, 0,
                     p.tilt,
                     p.azimuth,
                     p.thrust_factor,
-                    p.separation_delay])
+                    p.separation_delay,
+                    p.fin_cants,
+                    p.parachute_cds])
 
     kml = simplekml.Kml()
     style = simplekml.Style()
