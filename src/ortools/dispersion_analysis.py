@@ -112,6 +112,7 @@ def diana(directory, filename, config, output,
         create_plots(
             [],
             output_filename,
+            general_parameters,
             plot_coordinate_type,
             results_are_shown)
         return
@@ -121,6 +122,34 @@ def diana(directory, filename, config, output,
         orh = orhelper.Helper(instance)
         i_simulation = int(config["General"]["SimulationIndex"])
         sim = get_simulation(orh, ork_file_path, i_simulation)
+
+        # get global simulation parameters
+        options = sim.getOptions()
+        geodetic_computation = options.getGeodeticComputation()
+        #:raise ValueError:
+        #    If the geodetic computation is not flat or WGS84
+        logging.info(
+            "Geodetic computation {} found.".format(geodetic_computation))
+        computation_is_supported = (
+            geodetic_computation == geodetic_computation.FLAT
+            or geodetic_computation == geodetic_computation.WGS84)
+        if not computation_is_supported:
+            raise ValueError("GeodeticComputationStrategy type not supported!")
+
+        launch_point = orh.openrocket.util.WorldCoordinate(
+            options.getLaunchLatitude(),
+            options.getLaunchLongitude(),
+            options.getLaunchAltitude())
+        logging.info("Launch Point {} found.".format(launch_point))
+
+        GeneralParameters = collections.namedtuple("GeneralParameters", [
+            "launch_point",
+            "geodetic_computation"])
+        general_parameters = GeneralParameters(
+            launch_point=launch_point,
+            geodetic_computation=geodetic_computation)
+
+        # get random parameters
         rocket_components, random_parameters = \
             set_up_random_parameters(orh, sim, config)
 
@@ -148,15 +177,15 @@ def diana(directory, filename, config, output,
         # the following functions rely on orhelper
         # -> run them before JVM is shut down
         t2 = time.time()
-        print_statistics(results)
-        export_results(results, parametersets, output_filename)
+        print_statistics(results, general_parameters)
+        export_results(results, parametersets, general_parameters, output_filename)
         t3 = time.time()
         print("---")
         print("time for {} simulations = {:.1f}s".format(n_simulations,
                                                          t2 - t1))
         print("total execution time = {:.1f}s".format(t3 - t0))
-        create_plots(results, output_filename, plot_coordinate_type,
-                     results_are_shown)
+        create_plots(results, output_filename, general_parameters,
+                     plot_coordinate_type, results_are_shown)
 
 
 def make_paths_in_config_absolute(config, config_file_path):
@@ -394,20 +423,15 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
 
     :return:
         A tuple containing (landing_point_world, launch_position,
-        geodetic_computation, apogee, trajectory, landing_point_cartesian)
-
-    :raise ValueError:
-        If the geodetic computation is not flat or WGS84
+        apogee, trajectory, landing_point_cartesian
     """
     wind_listener = WindListener(config["WindModel"]["DataFile"], "linear")
-    launch_point_listener = LaunchPointListener()
     motor_listener = MotorListener(
         parameterset.thrust_factor,
         float(config["Propulsion"]["NozzleCrossSection"]))
 
     orh.run_simulation(
-        sim, listeners=(launch_point_listener,
-                        wind_listener,
+        sim, listeners=(wind_listener,
                         motor_listener))
 
     # see if there were any warnings
@@ -425,16 +449,6 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
     for ev in events:
         if ev.getType() == ev.Type.EXCEPTION:
             simulation_exception_raised = True
-
-    # TODO parse that outside of run_simulation
-    conditions = sim.getSimulatedConditions()
-    geodetic_computation = conditions.getGeodeticComputation()
-    logging.info("Geodetic computation {} found.".format(geodetic_computation))
-    computation_is_supported = (
-        geodetic_computation == geodetic_computation.FLAT
-        or geodetic_computation == geodetic_computation.WGS84)
-    if not computation_is_supported:
-        raise ValueError("GeodeticComputationStrategy type not supported!")
 
     # extract trajectory in any case, but other results only if simulation
     # did not throw any exception
@@ -456,16 +470,12 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
 
     Results = collections.namedtuple("Results", [
         "landing_point_world",
-        "launch_point",
-        "geodetic_computation",
         "apogee",
         "trajectory",
         "landing_point_cartesian",
         "theta_ignition",
         "altitude_ignition"])
     r = Results(landing_point_world=landing_world,
-                launch_point=launch_point_listener.launch_point,
-                geodetic_computation=geodetic_computation,
                 apogee=apogee,
                 trajectory=trajectory,
                 landing_point_cartesian=landing_cartesian,
@@ -473,21 +483,6 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
                 altitude_ignition=altitude_ignition
                 )
     return r
-
-
-class LaunchPointListener(orhelper.AbstractSimulationListener):
-    """Return information at the ``startSimulation`` callback."""
-
-    def __init__(self):
-        self.launch_point = None
-
-    def startSimulation(self, status):
-        """Analyze the simulation conditions of OpenRocket.
-
-        These are the launch point-
-        """
-        conditions = status.getSimulationConditions()
-        self.launch_point = conditions.getLaunchSite()
 
 
 class MotorListener(orhelper.AbstractSimulationListener):
@@ -920,14 +915,14 @@ def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
             logging.info("theta {:.1f}°, ".format(theta_ignition)
                          + "altitude {:.1f}m, ".format(altitude_ignition))
         else:
-            t_ignition = nan
-            theta_ignition = nan
-            phi_ignition = nan
-            altitude_ignition = nan
+            t_ignition = []
+            theta_ignition = []
+            phi_ignition = []
+            altitude_ignition = []
     except BaseException:
         logging.warning('no ignition found')
-        theta_ignition = nan
-        altitude_ignition = nan
+        theta_ignition = []
+        altitude_ignition = []
 
     return theta_ignition, altitude_ignition
 
@@ -954,11 +949,11 @@ def get_trajectory(open_rocket_helper, simulation, branch_number=0):
     return [x, y, altitude]
 
 
-def print_statistics(results):
+def print_statistics(results, general_parameters):
     """Print statistics of all simulation results."""
     landing_points = [r.landing_point_world for r in results]
-    launch_point = results[0].launch_point
-    geodetic_computation = results[0].geodetic_computation
+    launch_point = general_parameters.launch_point
+    geodetic_computation = general_parameters.geodetic_computation
     apogees = [r.apogee for r in results]
     ignitions_theta = [r.theta_ignition for r in results if r.theta_ignition]
     ignitions_altitude = [
@@ -1012,7 +1007,7 @@ def print_statistics(results):
         len(distances), len(landing_points)))
 
 
-def export_results(results, parametersets, output_filename):
+def export_results(results, parametersets, general_parameters, output_filename):
     """Create csv with all simulation results and its global parameterset."""
     with open(output_filename + ".csv", 'w', newline='') as csvfile:
         resultwriter = csv.writer(csvfile, delimiter=',')
@@ -1056,8 +1051,8 @@ def export_results(results, parametersets, output_filename):
 
     pnt = kml.newpoint(name="Launch")
     pnt.coords = [(
-        results[0].launch_point.getLongitudeDeg(),
-        results[0].launch_point.getLatitudeDeg())]
+        general_parameters.launch_point.getLongitudeDeg(),
+        general_parameters.launch_point.getLatitudeDeg())]
 
     for r in results:
         if r.landing_point_world:
@@ -1098,8 +1093,8 @@ def compute_distance_and_bearing_flat(from_, to):
 
 
 # TODO: Try to refactor this ugly plotting function
-def create_plots(results, output_filename, plot_coordinate_type="flat",
-                 results_are_shown=False):
+def create_plots(results, output_filename, general_parameters,
+                 plot_coordinate_type="flat", results_are_shown=False):
     """Create, store and optionally show the plots of the results.
 
     :raise ValueError:
@@ -1134,13 +1129,14 @@ def create_plots(results, output_filename, plot_coordinate_type="flat",
             [to_array_world(r.landing_point_world) for r in results if r.landing_point_world])
         landing_points_cartesian = np.array(
             [to_array_cartesian(r.landing_point_cartesian) for r in results if r.landing_point_cartesian])
-        launch_point = to_array_world(results[0].launch_point)
-        geodetic_computation = results[0].geodetic_computation
+        launch_point = to_array_world(general_parameters.launch_point)
+        geodetic_computation = general_parameters.geodetic_computation
         apogees = np.array([to_array_world(r.apogee)
                            for r in results if r.apogee])
         trajectories = [r.trajectory for r in results]
         ignitions_theta = [r.theta_ignition for r in results]
         ignitions_altitude = [r.altitude_ignition for r in results]
+
     n_simulations = apogees.shape[0]
     if n_simulations < 1:
         logging.warning("No landing points found")
