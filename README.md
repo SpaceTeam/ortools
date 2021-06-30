@@ -33,7 +33,8 @@ Tools and scripts for [OpenRocket](https://openrocket.info/) using Python and
    ```
 
 4. `diana` needs to find `OpenRocket-15.03.jar`. Call `diana` from the same folder or add the file
-   to an environment variable called `CLASSPATH`, see [the oracle documentation](https://docs.oracle.com/javase/tutorial/essential/environment/paths.html).
+   to an environment variable called `CLASSPATH`, 
+   see [the oracle documentation](https://docs.oracle.com/javase/tutorial/essential/environment/paths.html).
    Check with 
    ```shell
    echo %CLASSPATH%
@@ -55,20 +56,39 @@ to get help and usage information.
 
 ### Procedure
 
-1. Define your project in the .ork file with nominal parameters.
-2. At the moment, the very first simulation configuration is used. 
-3. Except for the wind data, the following parameters can be used for dispersion analysis
-   - Launch Rod Tilt (0 is vertical)
-   - Launch Rod Azimuth (0 is north)
-   - Thrust Factor (1 is nominal)
-   - Thrust increase due to decreased ambient pressure. This is set via the nozzle diameter (set 0 to deactivate this feature).
-4. Configure the standard deviation for every supported parameter in the `ini`-file.
+1. Define your rocket in the `ork` file with nominal parameters.
+2. Create a `ini` file with your simulation settings, see the examples in [examples](examples)
+3. Fill the section `General` in the `ini` file:
+   - SimulationIndex: Index of simulation defined in the `ork` file, start counting from 0
+   - NumberOfSimulations: Number of simulations, which will be performed by `diana`
+   - OrkFile: the name of your `ork` file
+4. Configure the deviations for every supported parameter in the `ini`-file. If not specified otherwise, 
+	normal distribution is used with mean value from the original `ork` file and the standard deviation set in your `ini` file.
+	Currently supported are:
+   - Section `Aerodynamics`
+      - FinCant: Cant angle of the fins, calculated for every fincan in the design (degree)
+	  - ParachuteCd: Drag coefficient, calculated for every parachute in the design (unitless)
+	  - Roughness: Surface roughness used for drag calculation (m). 
+	      Only discrete roughness-categories are used by OpenRocket, see the [Source](https://github.com/openrocket/openrocket/blob/unstable/core/src/net/sf/openrocket/rocketcomponent/ExternalComponent.java#L23-L32)
+   - Section `LaunchRail`
+      - Tilt (degree)
+      - AzimuthMean (degree, 0 is north)
+	  - Azimuth Standard Deviation (degree)	   
+   - Section `Staging`: 
+	Useful for rockets with more than one stage. Define the staging event (burnout, launch, etc) and the nominal delay in the `ork` file. A uniform distribution with the interval
+	`(NominalDelay + StageSeparationDelayDeltaNeg, NominalDelay + StageSeparationDelayDeltaPos)` is then applied without changing the staging event.
+      - StageSeparationDelayDeltaNeg (in s)
+      - StageSeparationDelayDeltaPos (in s)
+   - Section `Propulsion`
+      - ThrustFactor: Factor applied to thrust curve (unitless, factor of 1 is nominal)
+      - NozzleCrossSection: Calculates thrust increase due to decreased ambient pressure. This is set via the nozzle diameter (set 0 to deactivate this feature).
 5. Run `diana`
 
 
 ### Limitations
 
-- Only single stage rockets are supported
+- OpenRocket does not solve stable if high wind speeds and/or large parameter deviations are set. 
+  Try to reduce the simulation step time, or lower the parameter deviations.
 - Check that the simulation option **flat earth** or **WGS84** is set.
 
 
@@ -79,6 +99,8 @@ Wind data can be given in an additional text file, containing the following data
 - Altitude (in m)
 - Direction (in °)
 - Wind speed (in m/s)
+
+Add the path to this file to the `WindModel` section to the key `DataFile`
 
 Where to get these data? Aviation aloft data, or wind predictions from, e.g., windy.com
 
