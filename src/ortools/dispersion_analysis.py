@@ -180,7 +180,12 @@ def diana(directory, filename, config, output,
         # -> run them before JVM is shut down
         t2 = time.time()
         print_statistics(results, general_parameters)
-        export_results(
+        export_results_csv(
+            results,
+            parametersets,
+            general_parameters,
+            output_filename)
+        export_results_kml(
             results,
             parametersets,
             general_parameters,
@@ -347,8 +352,8 @@ def set_up_random_parameters(orh, sim, config):
             thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
             stage_separation=lambda: [rng.uniform(min,
                                                   max) for (min, max) in zip(
-                stage_separation_delay_max,
-                stage_separation_delay_min)],
+                stage_separation_delay_min,
+                stage_separation_delay_max)],
             fin_cants=lambda: [rng.normal(mean, fincant_stddev)
                                for mean in fin_cant_means],
             parachutes_cd=lambda: [
@@ -483,14 +488,14 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
         "tilt",
         "azimuth",
         "thrust_factor",
-        "separation_delay",
+        "separation_delays",
         "fin_cants",
         "parachute_cds"])
     return Parameters(
-        tilt=tilt,
-        azimuth=azimuth,
-        thrust_factor=thrust_factor,
-        separation_delay=separationDelays,
+        tilt = tilt,
+        azimuth = azimuth,
+        thrust_factor = thrust_factor,
+        separation_delays = separationDelays,
         fin_cants = fin_cants,
         parachute_cds = parachute_cds)
 
@@ -1084,59 +1089,62 @@ def print_statistics(results, general_parameters):
         len(distances), len(landing_points)))
 
 
-def export_results(results, parametersets,
+def export_results_csv(results, parametersets,
                    general_parameters, output_filename):
     """Create csv with all simulation results and its global parameterset."""
     with open(output_filename + ".csv", 'w', newline='') as csvfile:
         resultwriter = csv.writer(csvfile, delimiter=',')
-        resultwriter.writerow(["lat / deg", "lon / deg",
-                               "landing x / m", "landing y /m", "apogee / m",
-                               "ignition theta / deg", "ignition altitude / m",
-                               "tilt / deg", "azimuth / deg",
-                               "thrust_factor / 1", "stage separation delay / s",
-                               "fin cant / °", "parachute CD / 1"])
+        resultwriter.writerow(["launch tilt / deg", " launch azimuth / deg",
+                               " thrust_factor / 1", " stage separation delay / s",
+                               " fin cant / deg", " parachute CD / 1",
+                               " landing lat / deg", " landing lon / deg",
+                               " landing x / m", " landing y /m", " apogee / m",
+                               " ignition theta / deg", " ignition altitude / m"])
         for r, p in zip(results, parametersets):
             if r.landing_point_world:
                 # valid solution
                 resultwriter.writerow([
-                    r.landing_point_world.getLatitudeDeg(),
-                    r.landing_point_world.getLongitudeDeg(),
-                    r.landing_point_cartesian.x,
-                    r.landing_point_cartesian.y,
-                    r.apogee.getAltitude(),
-                    r.theta_ignition,
-                    r.altitude_ignition,
-                    p.tilt,
-                    p.azimuth,
-                    p.thrust_factor,
-                    p.separation_delay,
+                    "%.2f" % p.tilt, 
+                    "%.2f" % p.azimuth,
+                    "%.2f" % p.thrust_factor,
+                    p.separation_delays,
                     p.fin_cants,
-                    p.parachute_cds])
+                    p.parachute_cds,
+                    "%.6f" % r.landing_point_world.getLatitudeDeg(),
+                    "%.6f" % r.landing_point_world.getLongitudeDeg(),
+                    "%.2f" % r.landing_point_cartesian.x,
+                    "%.2f" % r.landing_point_cartesian.y,
+                    "%.2f" % r.apogee.getAltitude(),
+                    "%.2f" % r.theta_ignition,
+                    "%.2f" % r.altitude_ignition])
             elif r.apogee:
                 resultwriter.writerow([
-                    0, 0, 0, 0,
-                    r.apogee.getAltitude(), 0, 0,
                     p.tilt,
                     p.azimuth,
                     p.thrust_factor,
-                    p.separation_delay,
+                    p.separation_delays,
                     p.fin_cants,
-                    p.parachute_cds])
+                    p.parachute_cds,
+                    0, 0, 0, 0,
+                    r.apogee.getAltitude(), 0, 0])
             else:
                 resultwriter.writerow([
-                    0, 0, 0, 0, 0, 0, 0,
                     p.tilt,
                     p.azimuth,
                     p.thrust_factor,
-                    p.separation_delay,
+                    p.separation_delays,
                     p.fin_cants,
-                    p.parachute_cds])
+                    p.parachute_cds,
+                    0, 0, 0, 0, 0, 0, 0])
 
+def export_results_kml(results, parametersets,
+                   general_parameters, output_filename):
+    """Create kml with all landing positions. """
     kml = simplekml.Kml()
     style = simplekml.Style()
     style.labelstyle.color = simplekml.Color.yellow  # color the text
     style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
-
+    
     pnt = kml.newpoint(name="Launch")
     pnt.coords = [(
         general_parameters.launch_point.getLongitudeDeg(),
