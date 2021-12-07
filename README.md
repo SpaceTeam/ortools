@@ -78,8 +78,9 @@ to get help and usage information.
 	  - Roughness: Surface roughness used for drag calculation (m). 
 	      Only discrete roughness-categories are used by OpenRocket, see the [Source](https://github.com/openrocket/openrocket/blob/unstable/core/src/net/sf/openrocket/rocketcomponent/ExternalComponent.java#L23-L32)
    - Section `LaunchRail`
-      - Tilt (degree)
-      - AzimuthMean (degree, 0 is north)
+      - [TiltMean (degree)]: consider  that for the first simulation the values set in OR will be used
+      - Tilt Standard Deviation (degree)
+      - AzimuthMean (degree, 0 is north): consider  that for the first simulation the values set in OR will be used
 	  - Azimuth Standard Deviation (degree)	   
    - Section `Staging`: 
 	Useful for rockets with more than one stage. Define the staging event (burnout, launch, etc) and the nominal delay in the `ork` file. A uniform distribution with the interval

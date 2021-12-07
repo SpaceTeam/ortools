@@ -249,7 +249,12 @@ def set_up_random_parameters(orh, sim, config):
     azimuth_mean = options.getLaunchRodDirection()
 
     azimuth_stddev = math.radians(float(config["LaunchRail"]["Azimuth"]))
-    tilt_mean = options.getLaunchRodAngle()
+    if config.has_option("LaunchRail", "TiltMean"):
+        #override OR settings
+        tilt_mean = math.radians(float(config["LaunchRail"]["TiltMean"]))        
+        options.setLaunchRodAngle(tilt_mean)
+    else:
+        tilt_mean = options.getLaunchRodAngle()
     tilt_stddev = math.radians(float(config["LaunchRail"]["Tilt"]))
     thrust_factor_stddev = float(config["Propulsion"]["ThrustFactor"])
     fincant_stddev = math.radians(float(config["Aerodynamics"]["FinCant"]))
