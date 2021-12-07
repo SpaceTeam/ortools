@@ -2,8 +2,11 @@
 
 Tools and scripts for [OpenRocket](https://openrocket.info/) using Python and
 [orhelper](https://pypi.org/project/orhelper/).
-
-
+## Prerequisites
+You must use Java 8 (a really, really old version) for this to work.
+See [orhelper](https://pypi.org/project/orhelper/), 
+additionally install [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) for installing `jpype1`.
+Tested with miniconda3-py39 ith python3.9, openjdk 1.8.0_312-1, orhelper 0.1.2 on Windows 10.
 ## Installation
 
 1. Download or clone the project.
@@ -28,17 +31,21 @@ Tools and scripts for [OpenRocket](https://openrocket.info/) using Python and
    (except for orhelper which is only available via pip).
 
    ```shell
-   conda install numpy matplotlib click configparser scipy pyproj
+   conda install numpy matplotlib click configparser simplekml scipy pyproj
    pip install orhelper
    ```
+   If jpype install fails, check if Microsoft C++ Build Tools are installed, and `JAVA_HOME` is set properly. 
+   If used with python 3.10, build jpype manually with [this source](https://github.com/jpype-project/jpype/commit/bbdca907d053f1e04e4dcd414d4ebce8f9da6313),
+   see the [following github-PR](https://github.com/kylebarron/pydelatin/pull/24).
 
-4. `diana` needs to find `OpenRocket-15.03.jar`. Call `diana` from the same folder or add the file
+4. `diana` needs to find `OpenRocket-15.03.jar`. Call `diana` from the same folder or add the file (not the folder)
    to an environment variable called `CLASSPATH`, 
    see [the oracle documentation](https://docs.oracle.com/javase/tutorial/essential/environment/paths.html).
    Check with 
    ```shell
    echo %CLASSPATH%
    $ PATHTTO\projects\OpenRocket-15.03.jar
+   java -jar OpenRocket-15.03.jar
    ```
 
 
