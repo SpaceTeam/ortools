@@ -1,6 +1,6 @@
 # altitude (m)  wind direction (°)  wind speed (m/s)
 0               0                   5
-914             0                   5
+914             0                   2.5
 1829            0                   0
 2743            310                 3
 3658            330                 3

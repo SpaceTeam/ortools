@@ -914,7 +914,7 @@ class WindListener(orhelper.AbstractSimulationListener):
 
         # pchip does not have an option to constrain to min/max values
         self.constrain_altitude = lambda alt: max(
-            [altitudes_m[1], min([alt, altitudes_m[-1]])])
+            [altitudes_m[0], min([alt, altitudes_m[-1]])])
 
     def preWindModel(self, status):
         """Set the wind coordinates at every simulation step."""
@@ -941,6 +941,13 @@ class WindListener(orhelper.AbstractSimulationListener):
 
     def postWindModel(self, status, wind):
         logging.debug("Wind: {}".format(wind))
+        conditions = status.getSimulationConditions()
+        wind_model = conditions.getWindModel()
+        logging.debug(
+            "Intensity {:.1e}, stddev {:.1e}, average {:.1e}".format(
+                wind_model.getTurbulenceIntensity(),
+                wind_model.getStandardDeviation(),
+                wind_model.getAverage()))
 
 
 # TODO: Maybe we can get all the interesting simulation results in a

@@ -90,6 +90,12 @@ to get help and usage information.
    - Section `Propulsion`
       - ThrustFactor: Factor applied to thrust curve (unitless, factor of 1 is nominal)
       - NozzleCrossSection: Calculates thrust increase due to decreased ambient pressure. This is set via the nozzle diameter (set 0 to deactivate this feature).
+	  - Useful for rockets with more than one stage. Define the ignition event of the motors and the nominal delay in the `ork` file. A uniform distribution with the interval
+	`(NominalDelay + IgnitionDelayDeltaNeg, NominalDelay + IgnitionDelayDeltaPos)` is then applied without changing the ignition event.
+         - IgnitionDelayDeltaNeg (in s)
+         - IgnitionDelayDeltaPos (in s)
+   - Section `WindModel`
+      - DataFile: see below
 5. Run `diana`
 
 
@@ -105,10 +111,12 @@ to get help and usage information.
 Wind data can be given in an additional text file, containing the following data in three columns separated by whitespace:
 
 - Altitude (in m)
-- Direction (in °)
+- Direction (in degree; where is the wind coming from, i.e., 0degree means northerly wind)
 - Wind speed (in m/s)
 
 Add the path to this file to the `WindModel` section to the key `DataFile`
+
+The turbulence model used by OpenRocket won't be changed: The turbulence intensity set in the `ork` file will be applied to calculate the standard deviation of the pink noise model, using the average windspeed interpolated at the current height by the data given in DataFile.
 
 Where to get these data? Aviation aloft data, or wind predictions from, e.g., windy.com
 
