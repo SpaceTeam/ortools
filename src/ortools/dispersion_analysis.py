@@ -162,14 +162,12 @@ def diana(directory, filename, config, output,
             if i > 0:
                 randomize_simulation(orh, sim, rocket_components,
                                      random_parameters)
-                parameterset = get_simulation_parameters(orh,
-                                                         sim, rocket_components,
-                                                         random_parameters, True)
+                parameterset = get_simulation_parameters(
+                    orh, sim, rocket_components, random_parameters, True)
             else:
                 print("with nominal parameter set but wind-model applied")
-                parameterset = get_simulation_parameters(orh,
-                                                         sim, rocket_components,
-                                                         random_parameters, False)
+                parameterset = get_simulation_parameters(
+                    orh, sim, rocket_components, random_parameters, False)
 
             result = run_simulation(orh, sim, config, parameterset)
 
@@ -250,8 +248,8 @@ def set_up_random_parameters(orh, sim, config):
 
     azimuth_stddev = math.radians(float(config["LaunchRail"]["Azimuth"]))
     if config.has_option("LaunchRail", "TiltMean"):
-        #override OR settings
-        tilt_mean = math.radians(float(config["LaunchRail"]["TiltMean"]))        
+        # override OR settings
+        tilt_mean = math.radians(float(config["LaunchRail"]["TiltMean"]))
         options.setLaunchRodAngle(tilt_mean)
     else:
         tilt_mean = options.getLaunchRodAngle()
@@ -272,10 +270,10 @@ def set_up_random_parameters(orh, sim, config):
         separationEventConfiguration = rocket.getChild(
             stage_nr).getStageSeparationConfiguration().get(mcid)
         separationDelay = separationEventConfiguration.getSeparationDelay()
-        if (config.has_section("Staging") 
+        if (config.has_section("Staging")
             and config.has_option(
-                "Staging", "StageSeparationDelayDeltaNeg") 
-            and config.has_option("Staging", "StageSeparationDelayDeltaPos")):
+                "Staging", "StageSeparationDelayDeltaNeg")
+                and config.has_option("Staging", "StageSeparationDelayDeltaPos")):
             # TODO set motor burnout of booster stage as lower minimum, and
             # motor ignition of upper stage as maximum
             stage_separation_delays_min.append(separationDelay + float(
@@ -298,7 +296,7 @@ def set_up_random_parameters(orh, sim, config):
     component_roughness_means = []
     ignition_delays_max = []
     ignition_delays_min = []
-    
+
     print("Rocket has {} stage(s).".format(rocket.getStageCount()))
     for component in orhelper.JIterator(rocket):
         logging.debug("Component {} of type {}".format(component.getName(),
@@ -308,11 +306,15 @@ def set_up_random_parameters(orh, sim, config):
         #   orh.openrocket.rocketcomponent.TrapezoidFinSet
         #   orh.openrocket.rocketcomponent.EllipticalFinSet
         if (isinstance(component, orh.openrocket.rocketcomponent.FinSet)):
-            logging.info("Finset({}) with ".format(component.getName())
-                         + "cant angle {:6.2f}°".format(math.degrees(component.getCantAngle())))
+            logging.info(
+                "Finset({}) with ".format(
+                    component.getName()) +
+                "cant angle {:6.2f}°".format(
+                    math.degrees(
+                        component.getCantAngle())))
             components_fin_sets.append(component)
             fin_cant_means.append(component.getCantAngle())
-            
+
         # parachutes
         if isinstance(component, orh.openrocket.rocketcomponent.Parachute):
             logging.info("Parachute with drag surface diameter "
@@ -320,28 +322,34 @@ def set_up_random_parameters(orh, sim, config):
                          + "CD of {:6.2f}".format(component.getCD()))
             components_parachutes.append(component)
             parachute_cd_means.append(component.getCD())
-            
-        # components with external surfaces -> drag    
+
+        # components with external surfaces -> drag
         if isinstance(component,
                       orh.openrocket.rocketcomponent.ExternalComponent):
             logging.info("External component {} with finish {}".format(
                 component, component.getFinish()))
             components_external_components.append(component)
             component_roughness_means.append(
-                component.getFinish().getRoughnessSize())                
-            
+                component.getFinish().getRoughnessSize())
+
         # motormounts with motors
         if (isinstance(component, orh.openrocket.rocketcomponent.MotorMount)):
             if component.isMotorMount():
                 components_motors.append(component)
                 ignition_delay = component.getIgnitionConfiguration().get(mcid).getIgnitionDelay()
-                logging.info("Motor mount in stage {}".format(component.getStageNumber())
-                    + " with delay {}s".format(ignition_delay))
-                    
-                if (config.has_section("Propulsion")
-                    and config.has_option("Propulsion", "IgnitionDelayDeltaNeg") 
-                    and config.has_option("Propulsion", "IgnitionDelayDeltaPos") 
-                    and component.getStageNumber() < (num_stages-1)): # do not change first stage ignition
+                logging.info(
+                    "Motor mount in stage {}".format(
+                        component.getStageNumber()) +
+                    " with delay {}s".format(ignition_delay))
+
+                if (
+                    config.has_section("Propulsion") and config.has_option(
+                        "Propulsion",
+                        "IgnitionDelayDeltaNeg") and config.has_option(
+                        "Propulsion",
+                        "IgnitionDelayDeltaPos") and component.getStageNumber() < (
+                        num_stages -
+                        1)):  # do not change first stage ignition
                     ignition_delays_min.append(ignition_delay + float(
                         config["Propulsion"]["IgnitionDelayDeltaNeg"]))
                     ignition_delays_max.append(ignition_delay + float(
@@ -373,17 +381,17 @@ def set_up_random_parameters(orh, sim, config):
         "ignition_delays"])
     return (
         RocketComponents(
-            fin_sets = components_fin_sets,
-            parachutes = components_parachutes,
-            external_components = components_external_components,
-            stages = stages,
-            motors = components_motors),
+            fin_sets=components_fin_sets,
+            parachutes=components_parachutes,
+            external_components=components_external_components,
+            stages=stages,
+            motors=components_motors),
         RandomParameters(
             tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
             azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
             thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
             stage_separation_delays=lambda: [rng.uniform(min,
-                                                  max) for (min, max) in zip(
+                                                         max) for (min, max) in zip(
                 stage_separation_delays_min,
                 stage_separation_delays_max)],
             fin_cants=lambda: [rng.normal(mean, fincant_stddev)
@@ -394,7 +402,7 @@ def set_up_random_parameters(orh, sim, config):
                     parachute_cd_stddev) for mean in parachute_cd_means],
             roughnesses=lambda: [rng.normal(mean, roughness_stddev) for mean in component_roughness_means],
             ignition_delays=lambda: [rng.uniform(min,
-                                                  max) for (min, max) in zip(
+                                                 max) for (min, max) in zip(
                 ignition_delays_min,
                 ignition_delays_max)]))
 
@@ -414,14 +422,17 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     rocket = options.getRocket()
     num_stages = rocket.getChildCount()
     # set stage sepration
-    for (stage, stage_separation_delay) in zip(
-            rocket_components.stages, random_parameters.stage_separation_delays()):
+    for (
+            stage,
+            stage_separation_delay) in zip(
+            rocket_components.stages,
+            random_parameters.stage_separation_delays()):
         separationEventConfiguration = stage.getStageSeparationConfiguration().get(mcid)
         logging.info(
             "Set separation delay of stage {}".format(stage))
         separationEventConfiguration.setSeparationDelay(
             stage_separation_delay)
-            
+
     # set motor ignition
     for (motor, ignition_delay) in zip(
             rocket_components.motors, random_parameters.ignition_delays()):
@@ -437,8 +448,10 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     for fins, fin_cant in zip(rocket_components.fin_sets,
                               random_parameters.fin_cants()):
         fins.setCantAngle(fin_cant)
-        logging.info("{} with cant angle {:6.2f}°".format(fins.getName(),
-                                                          math.degrees(fins.getCantAngle())))
+        logging.info(
+            "{} with cant angle {:6.2f}°".format(
+                fins.getName(), math.degrees(
+                    fins.getCantAngle())))
     # There can be more than one parachute -> add unbiased
     # normaldistributed value
     logging.info("Parachutes: ")
@@ -510,7 +523,7 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
 
     mcid = options.getMotorConfigurationID()
     rocket = options.getRocket()
-    
+
     # stage sepration
     separationDelays = []
     for stage in rocket_components.stages:
@@ -528,12 +541,13 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
     # normaldistributed value
     parachute_cds = []
     for parachute in rocket_components.parachutes:
-            parachute_cds.append(parachute.getCD())
-            
-    # motor ignition   
-    ignitionDelays = []     
-    for motor in rocket_components.motors:        
-        ignitionDelays.append(motor.getIgnitionConfiguration().get(mcid).getIgnitionDelay())
+        parachute_cds.append(parachute.getCD())
+
+    # motor ignition
+    ignitionDelays = []
+    for motor in rocket_components.motors:
+        ignitionDelays.append(
+            motor.getIgnitionConfiguration().get(mcid).getIgnitionDelay())
         logging.info("Ignition delay of stage {} = {:6.2f}s".format(
             motor.getStage(), ignitionDelays[-1]))
 
@@ -546,13 +560,13 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
         "parachute_cds",
         "ignition_delays"])
     return Parameters(
-        tilt = tilt,
-        azimuth = azimuth,
-        thrust_factor = thrust_factor,
-        separation_delays = separationDelays,
-        fin_cants = fin_cants,
-        parachute_cds = parachute_cds,
-        ignition_delays = ignitionDelays)
+        tilt=tilt,
+        azimuth=azimuth,
+        thrust_factor=thrust_factor,
+        separation_delays=separationDelays,
+        fin_cants=fin_cants,
+        parachute_cds=parachute_cds,
+        ignition_delays=ignitionDelays)
 
 
 def run_simulation(orh, sim, config, parameterset, branch_number=0):
@@ -655,8 +669,9 @@ def plot_wind_model(wind_model_file):
         # Read wind level model data from file
         data = np.loadtxt(wind_model_file)
     except (IOError, FileNotFoundError):
-        logging.warning("Warning: wind model file '{}' ".format(wind_model_file)
-                        + "not found! Default wind model will be used.")
+        logging.warning(
+            "Warning: wind model file '{}' ".format(wind_model_file) +
+            "not found! Default wind model will be used.")
         return
 
     altitudes_m = data[:, 0]
@@ -695,8 +710,11 @@ def plot_wind_model(wind_model_file):
         alt, tck_east, der=0, ext=3)
     wind_north_plt_spline = interpolate_wind_speed_north_mps(alt_rng)
     wind_east_plt_spline = interpolate_wind_speed_east_mps(alt_rng)
-    wind_speed_mps_ne_plt_spline = np.sqrt(wind_north_plt_spline * wind_north_plt_spline
-                                           + wind_east_plt_spline * wind_east_plt_spline)
+    wind_speed_mps_ne_plt_spline = np.sqrt(
+        wind_north_plt_spline *
+        wind_north_plt_spline +
+        wind_east_plt_spline *
+        wind_east_plt_spline)
     wind_direction_rad_ne_plt_spline = np.unwrap(np.arctan2(
         wind_east_plt_spline, wind_north_plt_spline))
 
@@ -709,8 +727,11 @@ def plot_wind_model(wind_model_file):
         fill_value=(wind_speeds_east_mps[0], wind_speeds_east_mps[-1]))
     wind_north_plt_linear = interpolate_wind_speed_north_mps(alt_rng)
     wind_east_plt_linear = interpolate_wind_speed_east_mps(alt_rng)
-    wind_speed_mps_ne_plt_linear = np.sqrt(wind_north_plt_linear * wind_north_plt_linear
-                                           + wind_east_plt_linear * wind_east_plt_linear)
+    wind_speed_mps_ne_plt_linear = np.sqrt(
+        wind_north_plt_linear *
+        wind_north_plt_linear +
+        wind_east_plt_linear *
+        wind_east_plt_linear)
     wind_direction_rad_ne_plt_linear = np.unwrap(np.arctan2(
         wind_east_plt_linear, wind_north_plt_linear))
 
@@ -737,8 +758,11 @@ def plot_wind_model(wind_model_file):
     wind_east_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
         altitudes_m, wind_speeds_east_mps, extrapolate=True)
     wind_east_plt_pchip = wind_east_plt_pchip_fct(alt_rng)
-    wind_speed_mps_ne_plt_pchip = np.sqrt(wind_north_plt_pchip * wind_north_plt_pchip
-                                          + wind_east_plt_pchip * wind_east_plt_pchip)
+    wind_speed_mps_ne_plt_pchip = np.sqrt(
+        wind_north_plt_pchip *
+        wind_north_plt_pchip +
+        wind_east_plt_pchip *
+        wind_east_plt_pchip)
     wind_direction_rad_ne_plt_pchip = np.unwrap(np.arctan2(
         wind_east_plt_pchip, wind_north_plt_pchip))
 
@@ -829,8 +853,9 @@ class WindListener(orhelper.AbstractSimulationListener):
             data = np.loadtxt(wind_model_file)
         except (IOError, FileNotFoundError):
             self._default_wind_model_is_used = True
-            logging.warning("Warning: wind model file '{}' ".format(wind_model_file)
-                            + "not found! Default wind model will be used.")
+            logging.warning(
+                "Warning: wind model file '{}' ".format(wind_model_file) +
+                "not found! Default wind model will be used.")
             return
 
         self._default_wind_model_is_used = False
@@ -888,8 +913,8 @@ class WindListener(orhelper.AbstractSimulationListener):
                 "Wrong interpolation method. Available are ´linear´, ´spline´, ´pchip´")
 
         # pchip does not have an option to constrain to min/max values
-        self.constrain_altitude = lambda alt: max([altitudes_m[1],
-                                                   min([alt, altitudes_m[-1]])])
+        self.constrain_altitude = lambda alt: max(
+            [altitudes_m[1], min([alt, altitudes_m[-1]])])
 
     def preWindModel(self, status):
         """Set the wind coordinates at every simulation step."""
@@ -1145,21 +1170,28 @@ def print_statistics(results, general_parameters):
 
 
 def export_results_csv(results, parametersets,
-                   general_parameters, output_filename):
+                       general_parameters, output_filename):
     """Create csv with all simulation results and its global parameterset."""
     with open(output_filename + ".csv", 'w', newline='') as csvfile:
         resultwriter = csv.writer(csvfile, delimiter=',')
-        resultwriter.writerow(["launch tilt / deg", " launch azimuth / deg",
-                               " thrust_factor / 1", " stage separation delay / s",
-                               " fin cant / deg", " parachute CD / 1",
-                               " landing lat / deg", " landing lon / deg",
-                               " landing x / m", " landing y /m", " apogee / m",
-                               " ignition theta / deg", " ignition altitude / m"])
+        resultwriter.writerow(["launch tilt / deg",
+                               " launch azimuth / deg",
+                               " thrust_factor / 1",
+                               " stage separation delay / s",
+                               " fin cant / deg",
+                               " parachute CD / 1",
+                               " landing lat / deg",
+                               " landing lon / deg",
+                               " landing x / m",
+                               " landing y /m",
+                               " apogee / m",
+                               " ignition theta / deg",
+                               " ignition altitude / m"])
         for r, p in zip(results, parametersets):
             if r.landing_point_world:
                 # valid solution
                 resultwriter.writerow([
-                    "%.2f" % p.tilt, 
+                    "%.2f" % p.tilt,
                     "%.2f" % p.azimuth,
                     "%.2f" % p.thrust_factor,
                     p.separation_delays,
@@ -1192,14 +1224,15 @@ def export_results_csv(results, parametersets,
                     p.parachute_cds,
                     0, 0, 0, 0, 0, 0, 0])
 
+
 def export_results_kml(results, parametersets,
-                   general_parameters, output_filename):
+                       general_parameters, output_filename):
     """Create kml with all landing positions. """
     kml = simplekml.Kml()
     style = simplekml.Style()
     style.labelstyle.color = simplekml.Color.yellow  # color the text
     style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
-    
+
     pnt = kml.newpoint(name="Launch")
     pnt.coords = [(
         general_parameters.launch_point.getLongitudeDeg(),
@@ -1276,10 +1309,10 @@ def create_plots(results, output_filename, general_parameters,
         apogees[:, 2] = alt
         geodetic_computation = 'flat'
     else:
-        landing_points_world = np.array(
-            [to_array_world(r.landing_point_world) for r in results if r.landing_point_world])
-        landing_points_cartesian = np.array(
-            [to_array_cartesian(r.landing_point_cartesian) for r in results if r.landing_point_cartesian])
+        landing_points_world = np.array([to_array_world(
+            r.landing_point_world) for r in results if r.landing_point_world])
+        landing_points_cartesian = np.array([to_array_cartesian(
+            r.landing_point_cartesian) for r in results if r.landing_point_cartesian])
         launch_point = to_array_world(general_parameters.launch_point)
         geodetic_computation = general_parameters.geodetic_computation
         apogees = np.array([to_array_world(r.apogee)
@@ -1314,8 +1347,8 @@ def create_plots(results, output_filename, general_parameters,
     elif plot_coordinate_type == "wgs84":
         # use world coordinates with OR's implementation of WGS84
         if geodetic_computation == geodetic_computation.FLAT:
-            raise ValueError(
-                "Wrong geodetic_computation set in OR for plot coordinate type {}, change to WGS84!".format(plot_coordinate_type))
+            raise ValueError("Wrong geodetic_computation set in OR for plot coordinate type {}, change to WGS84!".format(
+                plot_coordinate_type))
         x = landing_points_world[:, 1]
         y = landing_points_world[:, 0]
         x0 = launch_point[1]
