@@ -265,40 +265,40 @@ def set_up_random_parameters(orh, sim, config):
     rocket = options.getRocket()
     num_stages = rocket.getChildCount()
     stages = []
-    stage_separation_delay_max = []
-    stage_separation_delay_min = []
+    stage_separation_delays_max = []
+    stage_separation_delays_min = []
     for stage_nr in range(1, num_stages):
         stages.append(rocket.getChild(stage_nr))
         separationEventConfiguration = rocket.getChild(
             stage_nr).getStageSeparationConfiguration().get(mcid)
         separationDelay = separationEventConfiguration.getSeparationDelay()
-        if config.has_section("Staging") and config.has_option(
-                "Staging", "StageSeparationDelayDeltaNeg") and config.has_option("Staging", "StageSeparationDelayDeltaPos"):
+        if (config.has_section("Staging") 
+            and config.has_option(
+                "Staging", "StageSeparationDelayDeltaNeg") 
+            and config.has_option("Staging", "StageSeparationDelayDeltaPos")):
             # TODO set motor burnout of booster stage as lower minimum, and
             # motor ignition of upper stage as maximum
-            stage_separation_delay_min.append(separationDelay + float(
+            stage_separation_delays_min.append(separationDelay + float(
                 config["Staging"]["StageSeparationDelayDeltaNeg"]))
-            stage_separation_delay_max.append(separationDelay + float(
+            stage_separation_delays_max.append(separationDelay + float(
                 config["Staging"]["StageSeparationDelayDeltaPos"]))
         else:
-            stage_separation_delay_max.append(separationDelay)
-            stage_separation_delay_min.append(separationDelay)
-
-    # get simulation data
-    opts = sim.getOptions()
-
-    # get rocket data
-    rocket = opts.getRocket()
+            stage_separation_delays_max.append(separationDelay)
+            stage_separation_delays_min.append(separationDelay)
 
     # TODO: Move the components into its own function get_components()
     # or something. It makes no sense for this to be here.
     components_fin_sets = []
     components_parachutes = []
     components_external_components = []
+    components_motors = []
 
     fin_cant_means = []
     parachute_cd_means = []
     component_roughness_means = []
+    ignition_delays_max = []
+    ignition_delays_min = []
+    
     print("Rocket has {} stage(s).".format(rocket.getStageCount()))
     for component in orhelper.JIterator(rocket):
         logging.debug("Component {} of type {}".format(component.getName(),
@@ -312,19 +312,43 @@ def set_up_random_parameters(orh, sim, config):
                          + "cant angle {:6.2f}°".format(math.degrees(component.getCantAngle())))
             components_fin_sets.append(component)
             fin_cant_means.append(component.getCantAngle())
+            
+        # parachutes
         if isinstance(component, orh.openrocket.rocketcomponent.Parachute):
             logging.info("Parachute with drag surface diameter "
                          + "{:6.2f}m and ".format(component.getDiameter())
                          + "CD of {:6.2f}".format(component.getCD()))
             components_parachutes.append(component)
             parachute_cd_means.append(component.getCD())
+            
+        # components with external surfaces -> drag    
         if isinstance(component,
                       orh.openrocket.rocketcomponent.ExternalComponent):
             logging.info("External component {} with finish {}".format(
                 component, component.getFinish()))
             components_external_components.append(component)
             component_roughness_means.append(
-                component.getFinish().getRoughnessSize())
+                component.getFinish().getRoughnessSize())                
+            
+        # motormounts with motors
+        if (isinstance(component, orh.openrocket.rocketcomponent.MotorMount)):
+            if component.isMotorMount():
+                components_motors.append(component)
+                ignition_delay = component.getIgnitionConfiguration().get(mcid).getIgnitionDelay()
+                logging.info("Motor mount in stage {}".format(component.getStageNumber())
+                    + " with delay {}s".format(ignition_delay))
+                    
+                if (config.has_section("Propulsion")
+                    and config.has_option("Propulsion", "IgnitionDelayDeltaNeg") 
+                    and config.has_option("Propulsion", "IgnitionDelayDeltaPos") 
+                    and component.getStageNumber() < (num_stages-1)): # do not change first stage ignition
+                    ignition_delays_min.append(ignition_delay + float(
+                        config["Propulsion"]["IgnitionDelayDeltaNeg"]))
+                    ignition_delays_max.append(ignition_delay + float(
+                        config["Propulsion"]["IgnitionDelayDeltaPos"]))
+                else:
+                    ignition_delays_min.append(ignition_delay)
+                    ignition_delays_max.append(ignition_delay)
 
     logging.info("Initial launch rail tilt    = {:6.2f}°".format(
         math.degrees(tilt_mean)))
@@ -335,37 +359,44 @@ def set_up_random_parameters(orh, sim, config):
         "fin_sets",
         "parachutes",
         "external_components",
-        "stages"])
+        "stages",
+        "motors"])
     rng = np.random.default_rng()
     RandomParameters = collections.namedtuple("RandomParameters", [
         "tilt",
         "azimuth",
         "thrust_factor",
-        "stage_separation",
+        "stage_separation_delays",
         "fin_cants",
         "parachutes_cd",
-        "roughnesses"])
+        "roughnesses",
+        "ignition_delays"])
     return (
         RocketComponents(
-            fin_sets=components_fin_sets,
-            parachutes=components_parachutes,
-            external_components=components_external_components,
-            stages=stages),
+            fin_sets = components_fin_sets,
+            parachutes = components_parachutes,
+            external_components = components_external_components,
+            stages = stages,
+            motors = components_motors),
         RandomParameters(
             tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
             azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
             thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
-            stage_separation=lambda: [rng.uniform(min,
+            stage_separation_delays=lambda: [rng.uniform(min,
                                                   max) for (min, max) in zip(
-                stage_separation_delay_min,
-                stage_separation_delay_max)],
+                stage_separation_delays_min,
+                stage_separation_delays_max)],
             fin_cants=lambda: [rng.normal(mean, fincant_stddev)
                                for mean in fin_cant_means],
             parachutes_cd=lambda: [
                 rng.normal(
                     mean,
                     parachute_cd_stddev) for mean in parachute_cd_means],
-            roughnesses=lambda: [rng.normal(mean, roughness_stddev) for mean in component_roughness_means]))
+            roughnesses=lambda: [rng.normal(mean, roughness_stddev) for mean in component_roughness_means],
+            ignition_delays=lambda: [rng.uniform(min,
+                                                  max) for (min, max) in zip(
+                ignition_delays_min,
+                ignition_delays_max)]))
 
 
 def randomize_simulation(open_rocket_helper, sim, rocket_components,
@@ -379,17 +410,26 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     options.setLaunchIntoWind(False)
     options.setLaunchRodDirection(random_parameters.azimuth())
 
-    # set stage sepration
     mcid = options.getMotorConfigurationID()
     rocket = options.getRocket()
     num_stages = rocket.getChildCount()
+    # set stage sepration
     for (stage, stage_separation_delay) in zip(
-            rocket_components.stages, random_parameters.stage_separation()):
+            rocket_components.stages, random_parameters.stage_separation_delays()):
         separationEventConfiguration = stage.getStageSeparationConfiguration().get(mcid)
         logging.info(
             "Set separation delay of stage {}".format(stage))
         separationEventConfiguration.setSeparationDelay(
             stage_separation_delay)
+            
+    # set motor ignition
+    for (motor, ignition_delay) in zip(
+            rocket_components.motors, random_parameters.ignition_delays()):
+        ignitionConfiguration = motor.getIgnitionConfiguration().get(mcid)
+        logging.info(
+            "Set ignition delay of stage {}".format(motor.getStage()))
+        ignitionConfiguration.setIgnitionDelay(
+            ignition_delay)
 
     # There can be more than one finset -> add unbiased
     # normaldistributed value
@@ -468,9 +508,10 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
     logging.info("Launch rail azimuth = {:6.2f}°".format(azimuth))
     logging.info("Thrust factor = {:6.2f}".format(thrust_factor))
 
-    # stage sepration
     mcid = options.getMotorConfigurationID()
     rocket = options.getRocket()
+    
+    # stage sepration
     separationDelays = []
     for stage in rocket_components.stages:
         separationEventConfiguration = stage.getStageSeparationConfiguration().get(mcid)
@@ -488,6 +529,13 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
     parachute_cds = []
     for parachute in rocket_components.parachutes:
             parachute_cds.append(parachute.getCD())
+            
+    # motor ignition   
+    ignitionDelays = []     
+    for motor in rocket_components.motors:        
+        ignitionDelays.append(motor.getIgnitionConfiguration().get(mcid).getIgnitionDelay())
+        logging.info("Ignition delay of stage {} = {:6.2f}s".format(
+            motor.getStage(), ignitionDelays[-1]))
 
     Parameters = collections.namedtuple("Parameters", [
         "tilt",
@@ -495,14 +543,16 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
         "thrust_factor",
         "separation_delays",
         "fin_cants",
-        "parachute_cds"])
+        "parachute_cds",
+        "ignition_delays"])
     return Parameters(
         tilt = tilt,
         azimuth = azimuth,
         thrust_factor = thrust_factor,
         separation_delays = separationDelays,
         fin_cants = fin_cants,
-        parachute_cds = parachute_cds)
+        parachute_cds = parachute_cds,
+        ignition_delays = ignitionDelays)
 
 
 def run_simulation(orh, sim, config, parameterset, branch_number=0):

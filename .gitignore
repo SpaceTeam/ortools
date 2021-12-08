@@ -1,4 +1,5 @@
 .vs*
+*.bak
 
 __pycache__
 *.py[cod]
