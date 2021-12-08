@@ -1190,20 +1190,38 @@ def export_results_csv(results, parametersets,
         for r, p in zip(results, parametersets):
             if r.landing_point_world:
                 # valid solution
-                resultwriter.writerow([
-                    "%.2f" % p.tilt,
-                    "%.2f" % p.azimuth,
-                    "%.2f" % p.thrust_factor,
-                    p.separation_delays,
-                    p.fin_cants,
-                    p.parachute_cds,
-                    "%.6f" % r.landing_point_world.getLatitudeDeg(),
-                    "%.6f" % r.landing_point_world.getLongitudeDeg(),
-                    "%.2f" % r.landing_point_cartesian.x,
-                    "%.2f" % r.landing_point_cartesian.y,
-                    "%.2f" % r.apogee.getAltitude(),
-                    "%.2f" % r.theta_ignition,
-                    "%.2f" % r.altitude_ignition])
+                if r.theta_ignition:
+                    # multi stage
+                    resultwriter.writerow([
+                        "%.2f" % p.tilt,
+                        "%.2f" % p.azimuth,
+                        "%.2f" % p.thrust_factor,
+                        p.separation_delays,
+                        p.fin_cants,
+                        p.parachute_cds,
+                        "%.6f" % r.landing_point_world.getLatitudeDeg(),
+                        "%.6f" % r.landing_point_world.getLongitudeDeg(),
+                        "%.2f" % r.landing_point_cartesian.x,
+                        "%.2f" % r.landing_point_cartesian.y,
+                        "%.2f" % r.apogee.getAltitude(),
+                        "%.2f" % r.theta_ignition,
+                        "%.2f" % r.altitude_ignition])
+                else:
+                    # single stage
+                    resultwriter.writerow([
+                        "%.2f" % p.tilt,
+                        "%.2f" % p.azimuth,
+                        "%.2f" % p.thrust_factor,
+                        p.separation_delays,
+                        p.fin_cants,
+                        p.parachute_cds,
+                        "%.6f" % r.landing_point_world.getLatitudeDeg(),
+                        "%.6f" % r.landing_point_world.getLongitudeDeg(),
+                        "%.2f" % r.landing_point_cartesian.x,
+                        "%.2f" % r.landing_point_cartesian.y,
+                        "%.2f" % r.apogee.getAltitude(),
+                        "%.2f" % 0,
+                        "%.2f" % 0])
             elif r.apogee:
                 resultwriter.writerow([
                     p.tilt,
