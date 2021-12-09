@@ -1258,11 +1258,13 @@ def export_results_kml(results, parametersets,
     style.labelstyle.color = simplekml.Color.yellow  # color the text
     style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
 
+    # add mark for launch site
     pnt = kml.newpoint(name="Launch")
     pnt.coords = [(
         general_parameters.launch_point.getLongitudeDeg(),
         general_parameters.launch_point.getLatitudeDeg())]
 
+    # add landing points
     for r in results:
         if r.landing_point_world:
             pnt = kml.newpoint()
@@ -1270,6 +1272,35 @@ def export_results_kml(results, parametersets,
                 r.landing_point_world.getLongitudeDeg(),
                 r.landing_point_world.getLatitudeDeg())]
             pnt.style = style
+
+    # add confidence ellipses
+    def to_array_world(coordinate):
+        if coordinate:
+            return np.array([coordinate.getLatitudeDeg(),
+                            coordinate.getLongitudeDeg(),
+                            coordinate.getAltitude()])
+    landing_points_world = np.array([to_array_world(
+        r.landing_point_world) for r in results if r.landing_point_world])
+    x = landing_points_world[:, 1]
+    y = landing_points_world[:, 0]
+    if len(x) > 2:
+        ellipse1 = calc_confidence_ellipse(x, y, n_std=1)
+        pol = kml.newpolygon(name='1 sigma confidence ellipse')
+        pol.outerboundaryis = ellipse1
+        pol.style.linestyle.color = simplekml.Color.green
+        pol.style.linestyle.width = 5
+        pol.style.polystyle.color = simplekml.Color.changealphaint(
+            100, simplekml.Color.green)
+
+        ellipse3 = calc_confidence_ellipse(x, y, n_std=3)
+        pol = kml.newpolygon(name='3 sigma confidence ellipse')
+        pol.outerboundaryis = ellipse3
+        pol.style.linestyle.color = simplekml.Color.red
+        pol.style.linestyle.width = 5
+        pol.style.polystyle.color = simplekml.Color.changealphaint(
+            100, simplekml.Color.red)
+
+    # save results
     kml.save(output_filename + "_landingscatter.kml")
 
 
@@ -1395,12 +1426,10 @@ def create_plots(results, output_filename, general_parameters,
     linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
 
     if len(x) > 2:
-        confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
-                           edgecolor=colors[2], ls=linestyles[0])
-        confidence_ellipse(x, y, ax_lps, n_std=2, label=r"$2\sigma$",
-                           edgecolor=colors[1], ls=linestyles[1])
-        confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
-                           edgecolor=colors[0], ls=linestyles[2])
+        plot_confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
+                                edgecolor=colors[2], ls=linestyles[0])
+        plot_confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
+                                edgecolor=colors[0], ls=linestyles[2])
 
     ax_lps.legend()
     ax_lps.ticklabel_format(useOffset=False, style="plain")
@@ -1490,9 +1519,13 @@ def create_plots(results, output_filename, general_parameters,
 
 
 # TODO: Convert docstring style
-def confidence_ellipse(x, y, ax, n_std=3.0, facecolor="none", **kwargs):
+def plot_confidence_ellipse(x, y, ax, n_std=3.0, facecolor="none", **kwargs):
     """
     Create a plot of the covariance confidence ellipse of *x* and *y*.
+
+    Credits
+    ----------
+    https://matplotlib.org/stable/gallery/statistics/confidence_ellipse.html
 
     Parameters
     ----------
@@ -1541,7 +1574,67 @@ def confidence_ellipse(x, y, ax, n_std=3.0, facecolor="none", **kwargs):
               translate(mean_x, mean_y))
 
     ellipse.set_transform(transf + ax.transData)
+
     return ax.add_patch(ellipse)
+
+# TODO: Convert docstring style
+def calc_confidence_ellipse(x, y, n_std=3.0):
+    """
+    Calculate data of the covariance confidence ellipse of *x* and *y*.
+
+    Credits
+    ----------
+    Algorithm from https://carstenschelp.github.io/2018/09/14/Plot_Confidence_Ellipse_001.html
+
+    Parameters
+    ----------
+    x, y : array-like, shape (n, )
+        Input data.
+
+
+    n_std : float
+        The number of standard deviations to determine the ellipse's radiuses.
+
+    Returns
+    -------
+    2 by 36 tuple of coordinates for ellipse
+    """
+    if x.size != y.size:
+        raise ValueError("x and y must be the same size")
+
+    cov = np.cov(x, y)
+    pearson = cov[0, 1] / np.sqrt(cov[0, 0] * cov[1, 1])
+    # Using a special case to obtain the eigenvalues of this
+    # two-dimensionl dataset.
+    radius_x = np.sqrt(1 + pearson)
+    radius_y = np.sqrt(1 - pearson)
+
+    # Calculating the stdandard deviation of x from
+    # the squareroot of the variance and multiplying
+    # with the given number of standard deviations.
+    scale_x = np.sqrt(cov[0, 0]) * n_std
+    x0 = np.mean(x)
+
+    # calculating the stdandard deviation of y ...
+    scale_y = np.sqrt(cov[1, 1]) * n_std
+    y0 = np.mean(y)
+
+    # 36 points for a smooth shape
+    num_pts = 36
+
+    # calculate points of confidence ellipse
+    t = np.linspace(0, 2 * np.pi, num_pts)
+    ellipse = np.array([radius_x * np.cos(t), radius_y * np.sin(t)])
+    rotated_ellipse = rotation_matrix(45) @ ellipse
+    scale, origin = np.asarray([scale_x, scale_y]), np.asarray([x0, y0])
+    transformed_ellipse = (rotated_ellipse.T * scale + origin)
+    return list(map(tuple, transformed_ellipse))
+
+
+def rotation_matrix(degree):
+    theta = np.radians(degree)
+    c, s = np.cos(theta), np.sin(theta)
+    return np.array(((c, -s), (s, c)))
 
 
 def get_object_methods(obj):
