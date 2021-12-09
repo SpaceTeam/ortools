@@ -577,12 +577,16 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
         apogee, trajectory, landing_point_cartesian
     """
     wind_listener = WindListener(config["WindModel"]["DataFile"], "linear")
+    mass_calculation_listener = MassCalculationListener(parameterset)
+    aerodynamic_forces_listener = AerodynamicForcesListener(parameterset)
     motor_listener = MotorListener(
         parameterset.thrust_factor,
         float(config["Propulsion"]["NozzleCrossSection"]))
 
     orh.run_simulation(
         sim, listeners=(wind_listener,
+                        mass_calculation_listener,
+                        aerodynamic_forces_listener,
                         motor_listener))
 
     # see if there were any warnings
@@ -662,6 +666,34 @@ class MotorListener(orhelper.AbstractSimulationListener):
         else:
             return self.thrust_factor * thrust
 
+
+class MassCalculationListener(orhelper.AbstractSimulationListener):
+    """Override the mass parameters of the rocket."""
+
+    def __init__(self, parameterset):
+        # do something
+        self.mass_factor = 1
+
+    def postMassCalculation(self, status, mass_data):
+        """"""
+        # return RigidBody-object mass_data, will overwrite old mass_data
+        # might be called several times for motor 
+		# double refLength = store.flightConditions.getRefLength();
+        # TODO: change mass + CoM with some fraction of RefLenght?
+        return mass_data
+
+class AerodynamicForcesListener(orhelper.AbstractSimulationListener):
+    """Override the aerodynamic parameters of the rocket."""
+
+    def __init__(self, parameterset):
+        # do something
+        self.Cfactor = 1
+
+    def postAerodynamicCalculation(self, status, aerodynamic_forces):
+        """"""
+        # return AerodynamicForces-object aerodynamic_forces, will overwrite old aerodynamic_forces
+        # TODO: change Caxial (all drag forces), CN+Cside (for non axial forces + pitch/yaw moments)
+        return aerodynamic_forces
 
 def plot_wind_model(wind_model_file):
     """Plot wind model file with different simulation methods"""
