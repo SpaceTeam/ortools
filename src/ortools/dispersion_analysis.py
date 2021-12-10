@@ -84,7 +84,7 @@ def diana(directory, filename, config, output,
     t0 = time.time()
     config_file_path = config or utility.find_latest_file(".ini", directory)
     config = configparser.ConfigParser()
-    # TODO: Define default values for all parameters of the .ini fileata file)
+    # TODO: Define default values for all parameters of the .ini file)
     config.read(config_file_path)
     make_paths_in_config_absolute(config, config_file_path)
 
@@ -259,6 +259,10 @@ def set_up_random_parameters(orh, sim, config):
     parachute_cd_stddev = float(config["Aerodynamics"]["ParachuteCd"])
     roughness_stddev = float(config["Aerodynamics"]["Roughness"])
 
+    Caxial_factor_stddev = float(config["Aerodynamics"]["CaxialFactor"])
+    Cside_factor_stddev = float(config["Aerodynamics"]["CsideFactor"])
+    CN_factor_stddev = float(config["Aerodynamics"]["CNFactor"])
+
     mcid = options.getMotorConfigurationID()
     rocket = options.getRocket()
     num_stages = rocket.getChildCount()
@@ -283,6 +287,11 @@ def set_up_random_parameters(orh, sim, config):
         else:
             stage_separation_delays_max.append(separationDelay)
             stage_separation_delays_min.append(separationDelay)
+
+    # MassCalculation
+    refLen = rocket.getReferenceType().getReferenceLength(sim.getConfiguration())
+    CG_stddev = float(config["MassCalculation"]["CG"])
+    mass_factor_stddev = float(config["MassCalculation"]["Mass"])
 
     # TODO: Move the components into its own function get_components()
     # or something. It makes no sense for this to be here.
@@ -378,7 +387,12 @@ def set_up_random_parameters(orh, sim, config):
         "fin_cants",
         "parachutes_cd",
         "roughnesses",
-        "ignition_delays"])
+        "ignition_delays",
+        "CG_shift",
+        "mass_factor",
+        "Caxial_factor",
+        "CN_factor",
+        "Cside_factor"])
     return (
         RocketComponents(
             fin_sets=components_fin_sets,
@@ -404,7 +418,12 @@ def set_up_random_parameters(orh, sim, config):
             ignition_delays=lambda: [rng.uniform(min,
                                                  max) for (min, max) in zip(
                 ignition_delays_min,
-                ignition_delays_max)]))
+                ignition_delays_max)],
+            CG_shift=lambda: refLen * rng.normal(0., CG_stddev),
+            mass_factor=lambda: rng.normal(1, mass_factor_stddev),
+            Caxial_factor=lambda: rng.normal(1, Caxial_factor_stddev),
+            CN_factor=lambda: rng.normal(1, CN_factor_stddev),
+            Cside_factor=lambda: rng.normal(1, Cside_factor_stddev)))
 
 
 def randomize_simulation(open_rocket_helper, sim, rocket_components,
@@ -514,12 +533,27 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
     azimuth = math.degrees(options.getLaunchRodDirection())
     if randomize:
         thrust_factor = random_parameters.thrust_factor()
+        mass_factor = random_parameters.mass_factor()
+        CG_shift = random_parameters.CG_shift()
+        Caxial_factor = random_parameters.Caxial_factor()
+        CN_factor = random_parameters.CN_factor()
+        Cside_factor = random_parameters.Cside_factor()
     else:
         thrust_factor = 1.
+        mass_factor = 1.
+        CG_shift = 0.
+        Caxial_factor = 1.
+        CN_factor = 1.
+        Cside_factor = 1.
 
     logging.info("Launch rail tilt    = {:6.2f}°".format(tilt))
     logging.info("Launch rail azimuth = {:6.2f}°".format(azimuth))
     logging.info("Thrust factor = {:6.2f}".format(thrust_factor))
+    logging.info("Mass factor = {:6.2f}".format(mass_factor))
+    logging.info("CG shift = {:6.2f}m".format(CG_shift))
+    logging.info("Caxial factor = {:6.2f}".format(Caxial_factor))
+    logging.info("CN factor = {:6.2f}".format(CN_factor))
+    logging.info("Cside factor = {:6.2f}".format(Cside_factor))
 
     mcid = options.getMotorConfigurationID()
     rocket = options.getRocket()
@@ -558,7 +592,12 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
         "separation_delays",
         "fin_cants",
         "parachute_cds",
-        "ignition_delays"])
+        "ignition_delays",
+        "mass_factor",
+        "CG_shift",
+        "Caxial_factor",
+        "CN_factor",
+        "Cside_factor"])
     return Parameters(
         tilt=tilt,
         azimuth=azimuth,
@@ -566,7 +605,12 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
         separation_delays=separationDelays,
         fin_cants=fin_cants,
         parachute_cds=parachute_cds,
-        ignition_delays=ignitionDelays)
+        ignition_delays=ignitionDelays,
+        mass_factor=mass_factor,
+        CG_shift=CG_shift,
+        Caxial_factor=Caxial_factor,
+        CN_factor=CN_factor,
+        Cside_factor=Cside_factor)
 
 
 def run_simulation(orh, sim, config, parameterset, branch_number=0):
@@ -577,8 +621,10 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
         apogee, trajectory, landing_point_cartesian
     """
     wind_listener = WindListener(config["WindModel"]["DataFile"], "linear")
-    mass_calculation_listener = MassCalculationListener(parameterset)
-    aerodynamic_forces_listener = AerodynamicForcesListener(parameterset)
+    mass_calculation_listener = MassCalculationListener(
+        parameterset.mass_factor, parameterset.CG_shift)
+    aerodynamic_forces_listener = AerodynamicForcesListener(
+        parameterset.Caxial_factor, parameterset.CN_factor, parameterset.Cside_factor)
     motor_listener = MotorListener(
         parameterset.thrust_factor,
         float(config["Propulsion"]["NozzleCrossSection"]))
@@ -670,30 +716,40 @@ class MotorListener(orhelper.AbstractSimulationListener):
 class MassCalculationListener(orhelper.AbstractSimulationListener):
     """Override the mass parameters of the rocket."""
 
-    def __init__(self, parameterset):
+    def __init__(self, mass_factor, CG_shift):
         # do something
-        self.mass_factor = 1
+        self.mass_factor = mass_factor
+        self.CG_shift = CG_shift
 
     def postMassCalculation(self, status, mass_data):
         """"""
         # return RigidBody-object mass_data, will overwrite old mass_data
-        # might be called several times for motor 
-		# double refLength = store.flightConditions.getRefLength();
-        # TODO: change mass + CoM with some fraction of RefLenght?
+        # TODO: how to change mass_data?
         return mass_data
+
 
 class AerodynamicForcesListener(orhelper.AbstractSimulationListener):
     """Override the aerodynamic parameters of the rocket."""
 
-    def __init__(self, parameterset):
+    def __init__(self, Caxial_factor, CN_factor, Cside_factor):
         # do something
-        self.Cfactor = 1
+        self.Caxial_factor = Caxial_factor
+        self.Cside_factor = Cside_factor
+        self.CN_factor = CN_factor
 
     def postAerodynamicCalculation(self, status, aerodynamic_forces):
         """"""
-        # return AerodynamicForces-object aerodynamic_forces, will overwrite old aerodynamic_forces
-        # TODO: change Caxial (all drag forces), CN+Cside (for non axial forces + pitch/yaw moments)
+        # return AerodynamicForces-object aerodynamic_forces, will overwrite
+        # old aerodynamic_forces
+        aerodynamic_forces.setCaxial(
+            aerodynamic_forces.getCaxial() *
+            self.Caxial_factor)
+        aerodynamic_forces.setCside(
+            aerodynamic_forces.getCside() *
+            self.Cside_factor)
+        aerodynamic_forces.setCN(aerodynamic_forces.getCN() * self.CN_factor)
         return aerodynamic_forces
+
 
 def plot_wind_model(wind_model_file):
     """Plot wind model file with different simulation methods"""
@@ -1219,6 +1275,9 @@ def export_results_csv(results, parametersets,
                                " stage separation delay / s",
                                " fin cant / deg",
                                " parachute CD / 1",
+                               " Caxial factor / 1",
+                               " CN factor / 1",
+                               " Cside factor / 1",
                                " landing lat / deg",
                                " landing lon / deg",
                                " landing x / m",
@@ -1238,6 +1297,9 @@ def export_results_csv(results, parametersets,
                         p.separation_delays,
                         p.fin_cants,
                         p.parachute_cds,
+                        "%.2f" % p.Caxial_factor,
+                        "%.2f" % p.CN_factor,
+                        "%.2f" % p.Cside_factor,
                         "%.6f" % r.landing_point_world.getLatitudeDeg(),
                         "%.6f" % r.landing_point_world.getLongitudeDeg(),
                         "%.2f" % r.landing_point_cartesian.x,
@@ -1254,6 +1316,9 @@ def export_results_csv(results, parametersets,
                         p.separation_delays,
                         p.fin_cants,
                         p.parachute_cds,
+                        "%.2f" % p.Caxial_factor,
+                        "%.2f" % p.CN_factor,
+                        "%.2f" % p.Cside_factor,
                         "%.6f" % r.landing_point_world.getLatitudeDeg(),
                         "%.6f" % r.landing_point_world.getLongitudeDeg(),
                         "%.2f" % r.landing_point_cartesian.x,
@@ -1263,22 +1328,28 @@ def export_results_csv(results, parametersets,
                         "%.2f" % 0])
             elif r.apogee:
                 resultwriter.writerow([
-                    p.tilt,
-                    p.azimuth,
-                    p.thrust_factor,
+                    "%.2f" % p.tilt,
+                    "%.2f" % p.azimuth,
+                    "%.2f" % p.thrust_factor,
                     p.separation_delays,
                     p.fin_cants,
                     p.parachute_cds,
+                    "%.2f" % p.Caxial_factor,
+                    "%.2f" % p.CN_factor,
+                    "%.2f" % p.Cside_factor,
                     0, 0, 0, 0,
                     r.apogee.getAltitude(), 0, 0])
             else:
                 resultwriter.writerow([
-                    p.tilt,
-                    p.azimuth,
-                    p.thrust_factor,
+                    "%.2f" % p.tilt,
+                    "%.2f" % p.azimuth,
+                    "%.2f" % p.thrust_factor,
                     p.separation_delays,
                     p.fin_cants,
                     p.parachute_cds,
+                    "%.2f" % p.Caxial_factor,
+                    "%.2f" % p.CN_factor,
+                    "%.2f" % p.Cside_factor,
                     0, 0, 0, 0, 0, 0, 0])
 
 
@@ -1610,6 +1681,8 @@ def plot_confidence_ellipse(x, y, ax, n_std=3.0, facecolor="none", **kwargs):
     return ax.add_patch(ellipse)
 
 # TODO: Convert docstring style
+
+
 def calc_confidence_ellipse(x, y, n_std=3.0):
     """
     Calculate data of the covariance confidence ellipse of *x* and *y*.
