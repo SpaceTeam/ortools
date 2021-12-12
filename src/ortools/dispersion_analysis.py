@@ -92,7 +92,7 @@ def diana(directory, filename, config, output,
     config.read(config_file_path)
     make_paths_in_config_absolute(config, config_file_path)
 
-    timestamp = time.strftime("%y%m%d%H%M%S",time.localtime(t0))
+    timestamp = time.strftime("%y%m%d%H%M%S", time.localtime(t0))
     output_filename = output or "dispersion_analysis_" + timestamp
     results_are_shown = show
     ork_file_path = config["General"]["OrkFile"]
@@ -137,15 +137,12 @@ def diana(directory, filename, config, output,
         # get global simulation parameters
         options = sim.getOptions()
         geodetic_computation = options.getGeodeticComputation()
-        #:raise ValueError:
-        #    If the geodetic computation is not flat or WGS84
+        # Put warning if the geodetic computation is not WGS84
         logging.info(
             "Geodetic computation {} found.".format(geodetic_computation))
-        computation_is_supported = (
-            geodetic_computation == geodetic_computation.FLAT
-            or geodetic_computation == geodetic_computation.WGS84)
-        if not computation_is_supported:
-            raise ValueError("GeodeticComputationStrategy type not supported!")
+        if not geodetic_computation == geodetic_computation.WGS84:
+            logging.warning("Geodetic computation {} is not recommended for landing scatter plots. Use WGS84 for highest accuracy.".format(
+                geodetic_computation))
 
         launch_point = orh.openrocket.util.WorldCoordinate(
             options.getLaunchLatitude(),
@@ -1288,7 +1285,7 @@ def print_statistics(results, general_parameters):
             if geodetic_computation == geodetic_computation.FLAT:
                 distance, bearing = compute_distance_and_bearing_flat(
                     launch_point, landing_point)
-            elif geodetic_computation == geodetic_computation.WGS84:
+            else:
                 geodesic = pyproj.Geod(ellps="WGS84")
                 fwd_azimuth, back_azimuth, distance = geodesic.inv(
                     launch_point.getLongitudeDeg(),
@@ -1573,10 +1570,7 @@ def create_plots(results, output_filename, general_parameters,
         ax_lps.set_xlabel(r"$\Delta x$ in m")
         ax_lps.set_ylabel(r"$\Delta y$ in m")
     elif plot_coordinate_type == "wgs84":
-        # use world coordinates with OR's implementation of WGS84
-        if geodetic_computation == geodetic_computation.FLAT:
-            raise ValueError("Wrong geodetic_computation set in OR for plot coordinate type {}, change to WGS84!".format(
-                plot_coordinate_type))
+        # use world coordinates with OR's geodetic_computation implementation
         x = landing_points_world[:, 1]
         y = landing_points_world[:, 0]
         x0 = launch_point[1]
