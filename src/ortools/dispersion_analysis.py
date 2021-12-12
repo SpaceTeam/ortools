@@ -92,7 +92,7 @@ def diana(directory, filename, config, output,
     config.read(config_file_path)
     make_paths_in_config_absolute(config, config_file_path)
 
-    timestamp = str(int(time.time()))
+    timestamp = time.strftime("%y%m%d%H%M%S",time.localtime(t0))
     output_filename = output or "dispersion_analysis_" + timestamp
     results_are_shown = show
     ork_file_path = config["General"]["OrkFile"]
