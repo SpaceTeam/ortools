@@ -304,8 +304,20 @@ def set_up_random_parameters(orh, sim, config):
 
     # MassCalculation
     refLen = rocket.getReferenceType().getReferenceLength(sim.getConfiguration())
-    CG_stddev = float(config["MassCalculation"]["CG"])
-    mass_factor_stddev = float(config["MassCalculation"]["Mass"])
+    if (config.has_section("MassCalculation")):
+        if(config.has_option(
+                "MassCalculation", "CG")):
+            CG_stddev = float(config["MassCalculation"]["CG"])
+        else:
+            CG_stddev = 0.
+        if(config.has_option(
+                "MassCalculation", "Mass")):
+            mass_factor_stddev = float(config["MassCalculation"]["Mass"])
+        else:
+            mass_factor_stddev = 0.
+    else:
+        CG_stddev = 0.
+        mass_factor_stddev = 0.
 
     # TODO: Move the components into its own function get_components()
     # or something. It makes no sense for this to be here.
@@ -1325,6 +1337,7 @@ def export_results_csv(results, parametersets,
                                " launch azimuth / deg",
                                " thrust_factor / 1",
                                " stage separation delay / s",
+                               " ignition delay / s",
                                " fin cant / deg",
                                " parachute CD / 1",
                                " Caxial factor / 1",
@@ -1347,6 +1360,7 @@ def export_results_csv(results, parametersets,
                         "%.2f" % p.azimuth,
                         "%.2f" % p.thrust_factor,
                         p.separation_delays,
+                        p.ignition_delays,
                         p.fin_cants,
                         p.parachute_cds,
                         "%.2f" % p.Caxial_factor,
@@ -1366,6 +1380,7 @@ def export_results_csv(results, parametersets,
                         "%.2f" % p.azimuth,
                         "%.2f" % p.thrust_factor,
                         p.separation_delays,
+                        p.ignition_delays,
                         p.fin_cants,
                         p.parachute_cds,
                         "%.2f" % p.Caxial_factor,
@@ -1384,6 +1399,7 @@ def export_results_csv(results, parametersets,
                     "%.2f" % p.azimuth,
                     "%.2f" % p.thrust_factor,
                     p.separation_delays,
+                    p.ignition_delays,
                     p.fin_cants,
                     p.parachute_cds,
                     "%.2f" % p.Caxial_factor,
@@ -1397,6 +1413,7 @@ def export_results_csv(results, parametersets,
                     "%.2f" % p.azimuth,
                     "%.2f" % p.thrust_factor,
                     p.separation_delays,
+                    p.ignition_delays,
                     p.fin_cants,
                     p.parachute_cds,
                     "%.2f" % p.Caxial_factor,
