@@ -42,6 +42,8 @@ EXCEPTION_FOR_MISSING_EVENTS = False
 STANDARD_PRESSURE = 101325.0  # The standard air pressure (1.01325 bar)
 METERS_PER_DEGREE_LATITUDE = 111325.0
 METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050.0
+# can be ´linear´, ´spline´, ´pchip´
+WIND_MODEL_INTERPOLATION = "linear"
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -64,12 +66,14 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
               default="flat", show_default=True,
               help=("The type of coordinates used in the scatter plot of the "
                     "landing points."))
+@click.option("--wind", "-w", is_flag=True, default=False,
+              help="Visualize the wind model.")
 @click.option("--show", "-s", is_flag=True, default=False,
               help="Show the plots.")
 @click.option("--verbose", "-v", is_flag=True, default=False,
               help="Show detailed results on screen.")
 def diana(directory, filename, config, output,
-          plot_coordinate_type, show, verbose):
+          plot_coordinate_type, wind, show, verbose):
     """Do a dispersion analysis of an OpenRocket simulation.
 
     A dispersion analysis runs multiple simulations with slightly
@@ -104,8 +108,15 @@ def diana(directory, filename, config, output,
         # Use logging.WARNING, or logging.DEBUG if necessary
         logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
-    if WINDMODEL_TEST:
-        plot_wind_model(config["WindModel"]["DataFile"])
+    if WINDMODEL_TEST or wind:
+        if (config.has_section("WindModel")
+            and config.has_option(
+                "WindModel", "DataFile")):
+            plot_wind_model(
+                config["WindModel"]["DataFile"],
+                WIND_MODEL_INTERPOLATION)
+        else:
+            raise ValueError("No wind model is provided")
         return
 
     if PLOTS_ARE_TESTED:
@@ -200,8 +211,11 @@ def diana(directory, filename, config, output,
 def make_paths_in_config_absolute(config, config_file_path):
     """Turn all paths in the diana config file into absolute ones."""
     directory = os.path.dirname(os.path.abspath(config_file_path))
-    config["WindModel"]["DataFile"] = os.path.join(
-        directory, config["WindModel"]["DataFile"])
+    if (config.has_section("WindModel")
+        and config.has_option(
+            "WindModel", "DataFile")):
+        config["WindModel"]["DataFile"] = os.path.join(
+            directory, config["WindModel"]["DataFile"])
     config["General"]["OrkFile"] = os.path.join(
         directory, config["General"]["OrkFile"])
 
@@ -620,7 +634,6 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
         A tuple containing (landing_point_world, launch_position,
         apogee, trajectory, landing_point_cartesian
     """
-    wind_listener = WindListener(config["WindModel"]["DataFile"], "linear")
     mass_calculation_listener = MassCalculationListener(
         parameterset.mass_factor, parameterset.CG_shift)
     aerodynamic_forces_listener = AerodynamicForcesListener(
@@ -629,11 +642,22 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
         parameterset.thrust_factor,
         float(config["Propulsion"]["NozzleCrossSection"]))
 
-    orh.run_simulation(
-        sim, listeners=(wind_listener,
-                        mass_calculation_listener,
-                        aerodynamic_forces_listener,
-                        motor_listener))
+    if (config.has_section("WindModel")
+        and config.has_option(
+            "WindModel", "DataFile")):
+        wind_listener = WindListener(
+            config["WindModel"]["DataFile"],
+            WIND_MODEL_INTERPOLATION)
+        orh.run_simulation(
+            sim, listeners=(wind_listener,
+                            mass_calculation_listener,
+                            aerodynamic_forces_listener,
+                            motor_listener))
+    else:
+        orh.run_simulation(
+            sim, listeners=(mass_calculation_listener,
+                            aerodynamic_forces_listener,
+                            motor_listener))
 
     # see if there were any warnings
     simulated_warnings = sim.getSimulatedWarnings()
@@ -751,8 +775,8 @@ class AerodynamicForcesListener(orhelper.AbstractSimulationListener):
         return aerodynamic_forces
 
 
-def plot_wind_model(wind_model_file):
-    """Plot wind model file with different simulation methods"""
+def plot_wind_model(wind_model_file, interpolation_method="linear"):
+    """Plot wind model file at given interpolation methods"""
     try:
         # Read wind level model data from file
         data = np.loadtxt(wind_model_file)
@@ -784,141 +808,169 @@ def plot_wind_model(wind_model_file):
     logging.info("Wind speed (m/s) ")
     logging.info(wind_speeds_mps)
 
+    # pchip does not have an option to constrain to min/max values
+    def constrain_altitude_array(alt):
+        altitude_constrained = alt.copy()  # we need to create a copy
+        altitude_constrained[altitude_constrained >
+                             altitudes_m[-1]] = altitudes_m[-1]
+        altitude_constrained[altitude_constrained <
+                             altitudes_m[0]] = altitudes_m[0]
+        return altitude_constrained
+
     fig, axs = plt.subplots(2)
-    alt_rng = np.arange(-1, 20e3, 1e2)
-
-    # spline via NE
-    tck_north = scipy.interpolate.splrep(
-        altitudes_m, wind_speeds_north_mps, s=0)
-    tck_east = scipy.interpolate.splrep(altitudes_m, wind_speeds_east_mps, s=0)
-
-    def interpolate_wind_speed_north_mps(alt): return scipy.interpolate.splev(
-        alt, tck_north, der=0, ext=3)
-    def interpolate_wind_speed_east_mps(alt): return scipy.interpolate.splev(
-        alt, tck_east, der=0, ext=3)
-    wind_north_plt_spline = interpolate_wind_speed_north_mps(alt_rng)
-    wind_east_plt_spline = interpolate_wind_speed_east_mps(alt_rng)
-    wind_speed_mps_ne_plt_spline = np.sqrt(
-        wind_north_plt_spline *
-        wind_north_plt_spline +
-        wind_east_plt_spline *
-        wind_east_plt_spline)
-    wind_direction_rad_ne_plt_spline = np.unwrap(np.arctan2(
-        wind_east_plt_spline, wind_north_plt_spline))
-
-    # linear via NE
-    interpolate_wind_speed_north_mps = scipy.interpolate.interp1d(
-        altitudes_m, wind_speeds_north_mps, bounds_error=False,
-        fill_value=(wind_speeds_north_mps[0], wind_speeds_north_mps[-1]))
-    interpolate_wind_speed_east_mps = scipy.interpolate.interp1d(
-        altitudes_m, wind_speeds_east_mps, bounds_error=False,
-        fill_value=(wind_speeds_east_mps[0], wind_speeds_east_mps[-1]))
-    wind_north_plt_linear = interpolate_wind_speed_north_mps(alt_rng)
-    wind_east_plt_linear = interpolate_wind_speed_east_mps(alt_rng)
-    wind_speed_mps_ne_plt_linear = np.sqrt(
-        wind_north_plt_linear *
-        wind_north_plt_linear +
-        wind_east_plt_linear *
-        wind_east_plt_linear)
-    wind_direction_rad_ne_plt_linear = np.unwrap(np.arctan2(
-        wind_east_plt_linear, wind_north_plt_linear))
-
-    # spline, wind speed + dir direct
-    tck_speed = scipy.interpolate.splrep(altitudes_m, wind_speeds_mps, s=0)
-    wind_speed_plt_spline = scipy.interpolate.splev(
-        alt_rng, tck_speed, der=0, ext=3)
-    tck_dir = scipy.interpolate.splrep(altitudes_m, wind_directions_rad, s=0)
-    wind_dir_plt_spline = np.unwrap(scipy.interpolate.splev(
-        alt_rng, tck_dir, der=0, ext=3))
-
-    # pchip, wind speed + dir direct
-    wind_speed_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
-        altitudes_m, wind_speeds_mps, extrapolate=True)
-    wind_speed_plt_pchip = wind_speed_plt_pchip_fct(alt_rng)
-    wind_dir_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
-        altitudes_m, wind_directions_rad, extrapolate=True)
-    wind_dir_plt_pchip = wind_dir_plt_pchip_fct(alt_rng)
-
-    # pchip, north east
-    wind_north_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
-        altitudes_m, wind_speeds_north_mps, extrapolate=True)
-    wind_north_plt_pchip = wind_north_plt_pchip_fct(alt_rng)
-    wind_east_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
-        altitudes_m, wind_speeds_east_mps, extrapolate=True)
-    wind_east_plt_pchip = wind_east_plt_pchip_fct(alt_rng)
-    wind_speed_mps_ne_plt_pchip = np.sqrt(
-        wind_north_plt_pchip *
-        wind_north_plt_pchip +
-        wind_east_plt_pchip *
-        wind_east_plt_pchip)
-    wind_direction_rad_ne_plt_pchip = np.unwrap(np.arctan2(
-        wind_east_plt_pchip, wind_north_plt_pchip))
+    altitude_range = np.arange(-1, np.amax([20e3, np.amax(altitudes_m)]), 1e2)
 
     axs[0].plot(altitudes_m, wind_speeds_mps, 'o', label="model")
-    axs[0].plot(
-        alt_rng,
-        wind_speed_mps_ne_plt_linear,
-        color="r",
-        label="linear via NE")
-    axs[0].plot(
-        alt_rng,
-        wind_speed_mps_ne_plt_spline,
-        color="g",
-        label="spline via NE")
-    axs[0].plot(
-        alt_rng,
-        wind_speed_mps_ne_plt_pchip,
-        color="b",
-        label="pchip via NE")
-    axs[0].plot(
-        alt_rng,
-        wind_speed_plt_spline,
-        color="g",
-        label="spline direct")
-    axs[0].plot(alt_rng, wind_speed_plt_pchip, color="b", label="pchip direct")
-    axs[0].set_ylabel("speed / ms")
-    axs[0].legend()
     axs[1].plot(
         altitudes_m,
         np.degrees(wind_directions_rad),
         'o',
         label="model")
-    axs[1].plot(
-        alt_rng,
-        np.degrees(
-            wind_direction_rad_ne_plt_linear +
-            2 *
-            np.pi),
-        color="r",
-        label="linear via NE")
-    axs[1].plot(
-        alt_rng,
-        np.degrees(
-            wind_direction_rad_ne_plt_spline +
-            2 *
-            np.pi),
-        color="g",
-        label="spline via NE")
-    axs[1].plot(
-        alt_rng,
-        np.degrees(
-            wind_direction_rad_ne_plt_pchip +
-            2 *
-            np.pi),
-        color="b",
-        label="pchip via NE")
-    axs[1].plot(
-        alt_rng,
-        np.degrees(wind_dir_plt_spline),
-        color="g",
-        label="spline direct")
-    axs[1].plot(
-        alt_rng,
-        np.degrees(wind_dir_plt_pchip),
-        color="b",
-        label="pchip direct")
+
+    if interpolation_method == "linear":
+        # linear via NE
+        interpolate_wind_speed_north_mps = scipy.interpolate.interp1d(
+            altitudes_m, wind_speeds_north_mps, bounds_error=False,
+            fill_value=(wind_speeds_north_mps[0], wind_speeds_north_mps[-1]))
+        interpolate_wind_speed_east_mps = scipy.interpolate.interp1d(
+            altitudes_m, wind_speeds_east_mps, bounds_error=False,
+            fill_value=(wind_speeds_east_mps[0], wind_speeds_east_mps[-1]))
+        wind_north_plt_linear = interpolate_wind_speed_north_mps(
+            altitude_range)
+        wind_east_plt_linear = interpolate_wind_speed_east_mps(altitude_range)
+        wind_speed_mps_ne_plt_linear = np.sqrt(
+            wind_north_plt_linear *
+            wind_north_plt_linear +
+            wind_east_plt_linear *
+            wind_east_plt_linear)
+        wind_direction_rad_ne_plt_linear = np.unwrap(np.arctan2(
+            wind_east_plt_linear, wind_north_plt_linear))
+
+        axs[0].plot(
+            altitude_range,
+            wind_speed_mps_ne_plt_linear,
+            color="r",
+            label="linear via NE")
+        axs[1].plot(
+            altitude_range,
+            np.degrees(
+                wind_direction_rad_ne_plt_linear +
+                2 *
+                np.pi),
+            color="r",
+            label="linear via NE")
+    elif interpolation_method == "spline":
+        # spline via NE
+        tck_north = scipy.interpolate.splrep(
+            altitudes_m, wind_speeds_north_mps, s=0)
+        tck_east = scipy.interpolate.splrep(
+            altitudes_m, wind_speeds_east_mps, s=0)
+
+        def interpolate_wind_speed_north_mps(
+            alt): return scipy.interpolate.splev(alt, tck_north, der=0, ext=3)
+        def interpolate_wind_speed_east_mps(
+            alt): return scipy.interpolate.splev(alt, tck_east, der=0, ext=3)
+        wind_north_plt_spline = interpolate_wind_speed_north_mps(
+            altitude_range)
+        wind_east_plt_spline = interpolate_wind_speed_east_mps(altitude_range)
+        wind_speed_mps_ne_plt_spline = np.sqrt(
+            wind_north_plt_spline *
+            wind_north_plt_spline +
+            wind_east_plt_spline *
+            wind_east_plt_spline)
+        wind_direction_rad_ne_plt_spline = np.unwrap(np.arctan2(
+            wind_east_plt_spline, wind_north_plt_spline))
+        axs[0].plot(
+            altitude_range,
+            wind_speed_mps_ne_plt_spline,
+            color="g",
+            label="spline via NE")
+        axs[1].plot(
+            altitude_range,
+            np.degrees(
+                wind_direction_rad_ne_plt_spline +
+                2 *
+                np.pi),
+            color="g",
+            label="spline via NE")
+    elif interpolation_method == "pchip":
+        # pchip, north east
+        wind_north_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
+            altitudes_m, wind_speeds_north_mps, extrapolate=True)
+        wind_north_plt_pchip = wind_north_plt_pchip_fct(
+            constrain_altitude_array(altitude_range))
+        wind_east_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
+            altitudes_m, wind_speeds_east_mps, extrapolate=True)
+        wind_east_plt_pchip = wind_east_plt_pchip_fct(
+            constrain_altitude_array(altitude_range))
+        wind_speed_mps_ne_plt_pchip = np.sqrt(
+            wind_north_plt_pchip *
+            wind_north_plt_pchip +
+            wind_east_plt_pchip *
+            wind_east_plt_pchip)
+        wind_direction_rad_ne_plt_pchip = np.unwrap(np.arctan2(
+            wind_east_plt_pchip, wind_north_plt_pchip))
+        axs[0].plot(
+            altitude_range,
+            wind_speed_mps_ne_plt_pchip,
+            color="b",
+            label="pchip via NE")
+        axs[1].plot(
+            altitude_range,
+            np.degrees(
+                wind_direction_rad_ne_plt_pchip +
+                2 *
+                np.pi),
+            color="b",
+            label="pchip via NE")
+    elif interpolation_method == "spline_direct":
+        # spline, wind speed + dir direct
+        tck_speed = scipy.interpolate.splrep(altitudes_m, wind_speeds_mps, s=0)
+        wind_speed_plt_spline = scipy.interpolate.splev(
+            altitude_range, tck_speed, der=0, ext=3)
+        tck_dir = scipy.interpolate.splrep(
+            altitudes_m, wind_directions_rad, s=0)
+        wind_dir_plt_spline = np.unwrap(scipy.interpolate.splev(
+            altitude_range, tck_dir, der=0, ext=3))
+        axs[0].plot(
+            altitude_range,
+            wind_speed_plt_spline,
+            color="g",
+            label="spline direct")
+        axs[1].plot(
+            altitude_range,
+            np.degrees(wind_dir_plt_spline),
+            color="g",
+            label="spline direct")
+    elif interpolation_method == "pchip_direct":
+        # pchip, wind speed + dir direct
+        wind_speed_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
+            altitudes_m, wind_speeds_mps, extrapolate=True)
+        wind_speed_plt_pchip = wind_speed_plt_pchip_fct(
+            constrain_altitude_array(altitude_range))
+        wind_dir_plt_pchip_fct = scipy.interpolate.PchipInterpolator(
+            altitudes_m, wind_directions_rad, extrapolate=True)
+        wind_dir_plt_pchip = wind_dir_plt_pchip_fct(
+            constrain_altitude_array(altitude_range))
+        axs[0].plot(
+            altitude_range,
+            wind_speed_plt_pchip,
+            color="b",
+            label="pchip direct")
+        axs[1].plot(
+            altitude_range,
+            np.degrees(wind_dir_plt_pchip),
+            color="b",
+            label="pchip direct")
+    else:
+        raise ValueError(
+            "Wrong interpolation method. Available are ´linear´, ´spline´, ´pchip´")
+
+    axs[0].set_ylabel("speed / ms")
+    axs[0].legend()
     axs[1].set_ylabel("direction / deg")
     axs[1].legend()
+    axs[1].set_xlabel("altitude / m")
 
     plt.show()
 
