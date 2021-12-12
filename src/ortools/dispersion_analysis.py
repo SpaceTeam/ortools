@@ -50,7 +50,7 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
 @click.command(context_settings=CONTEXT_SETTINGS)
 @click.option("--directory", "-d", type=click.Path(exists=True),
-              default="examples/", show_default=True,
+              default=".", show_default=True,
               help=("Directory in which the .ork and .ini files are located/"
                     "searched for."))
 @click.option("--filename", "-f", type=click.Path(exists=True),

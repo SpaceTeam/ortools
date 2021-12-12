@@ -67,10 +67,13 @@ analyses. Just execute
 ```shell
 diana
 ```
-in the root directory of `ortools` to run with the provided examples.
+in the examples-directory of `ortools` to run with the provided examples.
 Run
 ```shell
 diana -h
 ```
-to get help and usage information. For further information, check the [GitHub Wiki](https://github.com/SpaceTeam/ortools/wiki).
+to get help and usage information. For further information, check the [Wiki](https://github.com/SpaceTeam/ortools/wiki).
 
+## Contribution
+- If you have general questions, feel free to use the [Discussions Feature](https://github.com/SpaceTeam/ortools/discussions)
+- For any other contributions, see [CONTRIBUTING-file](CONTRIBUTING.MD)
