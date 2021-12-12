@@ -14,6 +14,9 @@ Additionally, install [Microsoft C++ Build Tools](https://visualstudio.microsoft
 Tested with the following version combinations:
 * miniconda3-py39 with python3.9, openjdk 1.8.0_312-1, orhelper 0.1.2, Windows 10
 * miniconda3-py39 with python3.9, oracle jdk1.8.0_202, orhelper 0.1.2, Windows 10
+* Ubuntu 20.04
+
+An installation on Mac OS was not successful so far. If you have figure that out, please let us know!
 
 ## Installation
 
@@ -25,7 +28,7 @@ Tested with the following version combinations:
    conda activate ortools
    ```
 
-3. If you are a developer, install the package in editable mode with pip. If not, leave out the `-e`
+3. Install the package with pip. If you are a developer, install the package in editable mode. If not, leave out the `-e`
    flag for a normal installation. In editable mode, all changes to the source files are immediately
    reflected in your environment, so you don't have to reinstall/update the package after changes.
 
@@ -34,7 +37,7 @@ Tested with the following version combinations:
    pip install -e .
    ```
 
-   All required packages will be automatically installed with pip too. If you don't like that you
+   All required packages will be automatically installed with pip too. If you don't like that, you
    can check [setup.cfg](setup.cfg) for the dependencies and install them beforehand with conda
    (except for orhelper which is only available via pip).
 
@@ -76,4 +79,4 @@ to get help and usage information. For further information, check the [Wiki](htt
 
 ## Contribution
 - If you have general questions, feel free to use the [Discussions Feature](https://github.com/SpaceTeam/ortools/discussions)
-- For any other contributions, see [CONTRIBUTING-file](CONTRIBUTING.MD)
+- For any other contributions, see [CONTRIBUTING-file](CONTRIBUTING.md)
