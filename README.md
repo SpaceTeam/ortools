@@ -8,15 +8,15 @@ As an example result, see the image from a landing scatter visualization produce
 
 
 ## Prerequisites
-You must use Java 8 (a really, really old version) for this to work, see [orhelper](https://pypi.org/project/orhelper/).
-Additionally, install [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) for installing `jpype1`.
+You should use Java 8 (a really, really old version) for this to work, see [orhelper](https://pypi.org/project/orhelper/). However, it may run with a newer java version even if the GUI of OpenRocket does not start.
+Additionally, install [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) for compiling `jpype1`.
 
 Tested with the following version combinations:
 * miniconda3-py39 with python3.9, openjdk 1.8.0_312-1, orhelper 0.1.2, Windows 10
 * miniconda3-py39 with python3.9, oracle jdk1.8.0_202, orhelper 0.1.2, Windows 10
-* Ubuntu 20.04
+* Python 3.8.5, openjdk 11.0.11, Ubuntu 20.04
 
-An installation on Mac OS was not successful so far. If you have figure that out, please let us know!
+An installation on Mac OS was not successful so far. If you have figured that out, please let us know!
 
 ## Installation
 
@@ -79,4 +79,9 @@ to get help and usage information. For further information, check the [Wiki](htt
 
 ## Contribution
 - If you have general questions, feel free to use the [Discussions Feature](https://github.com/SpaceTeam/ortools/discussions)
-- For any other contributions, see [CONTRIBUTING-file](CONTRIBUTING.md)
+- For any other contributions, see the [CONTRIBUTING instructions](CONTRIBUTING.md)
+
+## Credits
+- [SilentSys](https://github.com/SilentSys) for [https://github.com/SilentSys/orhelper](orhelper)
+- The community behind [OpenRocket](https://github.com/openrocket/openrocket)
+- RocketSam2016 with his idea of the [multilevel wind model](https://www.rocketryforum.com/threads/new-openrocket-plugin-to-allow-different-wind-speed-direction-at-different-altitudes.140619/)
