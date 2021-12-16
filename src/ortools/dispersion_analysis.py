@@ -681,18 +681,20 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
     simulation_exception_raised = False
     events = sim.getSimulatedData().getBranch(0).getEvents()
     for ev in events:
+        # how do I get the source of the exception?
+        # OR code: currentStatus.getWarnings()
         if ev.getType() == ev.Type.EXCEPTION:
             simulation_exception_raised = True
 
-    # extract trajectory in any case, but other results only if simulation
+    # extract results only if simulation
     # did not throw any exception
-    trajectory = get_trajectory(orh, sim, branch_number)
     if not simulation_exception_raised:
         apogee = get_apogee(orh, sim, branch_number)
         landing_world, landing_cartesian = get_landing_site(
             orh, sim, branch_number)
         theta_ignition, altitude_ignition = get_ignition_tilt(
             orh, sim, branch_number)
+        trajectory = get_trajectory(orh, sim, branch_number)
     else:
         logging.warning(
             "Simulation threw an exception")
@@ -701,6 +703,7 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
         landing_cartesian = []
         theta_ignition = []
         altitude_ignition = []
+        trajectory = []
 
     Results = collections.namedtuple("Results", [
         "landing_point_world",
@@ -1455,7 +1458,7 @@ def export_results_kml(results, parametersets,
     if len(x) > 2:
         ellipse1 = calc_confidence_ellipse(x, y, n_std=1)
         pol = kml.newpolygon(name='1 sigma confidence ellipse')
-        pol.outerboundaryis = ellipse1
+        pol.outerboundaryis = list(map(tuple, ellipse1))
         pol.style.linestyle.color = simplekml.Color.green
         pol.style.linestyle.width = 5
         pol.style.polystyle.color = simplekml.Color.changealphaint(
@@ -1463,7 +1466,7 @@ def export_results_kml(results, parametersets,
 
         ellipse3 = calc_confidence_ellipse(x, y, n_std=3)
         pol = kml.newpolygon(name='3 sigma confidence ellipse')
-        pol.outerboundaryis = ellipse3
+        pol.outerboundaryis = list(map(tuple, ellipse3))
         pol.style.linestyle.color = simplekml.Color.red
         pol.style.linestyle.width = 5
         pol.style.polystyle.color = simplekml.Color.changealphaint(
@@ -1584,18 +1587,15 @@ def create_plots(results, output_filename, general_parameters,
             + "Valid values are 'flat' and 'wgs84'.")
     ax_lps.plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
     ax_lps.plot(x, y, "r.", markersize=3, zorder=1, label="Landing")
-    # FIXME: For some reason, this does not change the x limits so
-    # equalizing xlim and ylim with the 3d plot later on does not work.
-    ax_lps.axis("equal")
 
-    colors = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
+    colors_lps = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
     linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
 
     if len(x) > 2:
         plot_confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
-                                edgecolor=colors[2], ls=linestyles[0])
+                                edgecolor=colors_lps[2], ls=linestyles[0])
         plot_confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
-                                edgecolor=colors[0], ls=linestyles[2])
+                                edgecolor=colors_lps[0], ls=linestyles[2])
 
     ax_lps.legend()
     ax_lps.ticklabel_format(useOffset=False, style="plain")
@@ -1604,28 +1604,46 @@ def create_plots(results, output_filename, general_parameters,
     ax_trajectories.set_title("Trajectories")
     colors = line_color_map(np.linspace(0, 1, len(trajectories)))
     if plot_coordinate_type == "flat":
+        
+                                
         for trajectory, color in zip(trajectories, colors):
-            x, y, alt = trajectory
+            if trajectory:
+                # valid trajectory
+                traj_x, traj_y, alt = trajectory
+                ax_trajectories.plot(
+                    xs=traj_x, ys=traj_y, zs=alt, color=color, linestyle="-")
+        # plot confidence ellipse, x+y are still the landing plots
+        if len(x) > 2:
+            zmin, zmax = ax_trajectories.get_zlim()
+            ellipse = calc_confidence_ellipse(x, y, n_std=1)
             ax_trajectories.plot(
-                xs=x, ys=y, zs=alt, color=color, linestyle="-")
+                ellipse[:,0], ellipse[:,1], zmin+0*ellipse[:,0], label=r"$1\sigma$",
+                                    color=colors_lps[2], ls=linestyles[0])  
+            ellipse = calc_confidence_ellipse(x, y, n_std=3)
+            ax_trajectories.plot(
+                ellipse[:,0], ellipse[:,1], zmin+0*ellipse[:,0], label=r"$3\sigma$",
+                                    color=colors_lps[0], ls=linestyles[2])                          
+                                
         ax_trajectories.ticklabel_format(useOffset=False, style="plain")
-        # Set x and y limits equal to that of the landing points plot. Does
-        # not work because .axis("equal") is strange.
-        xlim = ax_lps.get_xlim()
-        ylim = ax_lps.get_ylim()
-        logging.debug("xlim", xlim)
-        logging.debug("ylim", ylim)
-        # TODO trajectory might be outside of landing point scatter plot
-        # ax_trajectories.set_xlim(xlim)
-        # ax_trajectories.set_ylim(ylim)
+        # set the xspan and yspan identical, but do not make symmetrical
+        xleft, xright = ax_trajectories.get_xlim()
+        yleft, yright = ax_trajectories.get_ylim()
+        max_distance = max(xright - xleft, yright - yleft)
+        ax_trajectories.set_xlim(xleft, xleft + max_distance)
+        ax_trajectories.set_ylim(yleft, yleft + max_distance)
+        # set the xlim and ylim of the scatter plot identically
+        ax_lps.set_xlim(xleft, xleft + max_distance)
+        ax_lps.set_ylim(yleft, yleft + max_distance)
+
         ax_trajectories.set_xlabel("x in m")
         ax_trajectories.set_ylabel("y in m")
     elif plot_coordinate_type == "wgs84":
-        # TODO create data also in WGS84, depending on plot_coordinate_type
+        # TODO plot trajectory in WGS84 instead of x,y
         for trajectory, color in zip(trajectories, colors):
-            x, y, alt = trajectory
-            ax_trajectories.plot(
-                xs=x, ys=y, zs=alt, color=color, linestyle="-")
+            if trajectory:
+                x, y, alt = trajectory
+                ax_trajectories.plot(
+                    xs=x, ys=y, zs=alt, color=color, linestyle="-")
         ax_trajectories.ticklabel_format(useOffset=False, style="plain")
         ax_trajectories.set_xlabel("x in m")
         ax_trajectories.set_ylabel("y in m")
@@ -1796,7 +1814,7 @@ def calc_confidence_ellipse(x, y, n_std=3.0):
     rotated_ellipse = rotation_matrix(45) @ ellipse
     scale, origin = np.asarray([scale_x, scale_y]), np.asarray([x0, y0])
     transformed_ellipse = (rotated_ellipse.T * scale + origin)
-    return list(map(tuple, transformed_ellipse))
+    return transformed_ellipse
 
 
 def rotation_matrix(degree):
