@@ -689,6 +689,8 @@ def run_simulation(orh, sim, config, parameterset, general_parameters):
                 logging.info(warning)
 
     # process results
+    launch_point = general_parameters.launch_point
+    geodetic_computation = general_parameters.geodetic_computation
     branch_ct = sim.getSimulatedData().getBranchCount()
     num_stages = general_parameters.num_stages
     logging.debug(
@@ -701,7 +703,9 @@ def run_simulation(orh, sim, config, parameterset, general_parameters):
         "trajectory",
         "landing_point_cartesian",
         "theta_ignition",
-        "altitude_ignition"], defaults=(None,) * 6)
+        "altitude_ignition",
+        "distance",
+        "bearing"], defaults=(None,) * 8)
 
     simulation_exception_raised = False
     r = []
@@ -731,12 +735,30 @@ def run_simulation(orh, sim, config, parameterset, general_parameters):
                     orh, sim)
                 trajectory = get_trajectory(orh, sim, branch_nr)
 
+                # calculate distance in m and bearing in radians
+                if geodetic_computation == geodetic_computation.FLAT:
+                    distance, bearing = compute_distance_and_bearing_flat(
+                        launch_point, landing_world)
+                else:
+                    geodesic = pyproj.Geod(ellps="WGS84")
+                    fwd_azimuth, back_azimuth, distance = geodesic.inv(
+                        launch_point.getLongitudeDeg(),
+                        launch_point.getLatitudeDeg(),
+                        landing_world.getLongitudeDeg(),
+                        landing_world.getLatitudeDeg())
+                    bearing = np.radians(fwd_azimuth)
+
+                if bearing < 0.:
+                    bearing = bearing + 2 * math.pi
+
                 r.append(Results(landing_point_world=landing_world,
                                  apogee=apogee,
                                  trajectory=trajectory,
                                  landing_point_cartesian=landing_cartesian,
                                  theta_ignition=theta_ignition,
-                                 altitude_ignition=altitude_ignition
+                                 altitude_ignition=altitude_ignition,
+                                 distance=distance,
+                                 bearing=bearing
                                  ))
             else:
                 logging.warning(
@@ -1295,41 +1317,21 @@ def print_statistics(results, general_parameters):
     for stage_nr in range(general_parameters.num_stages):
         landing_points = [
             r[stage_nr].landing_point_world for r in results if r[stage_nr] and r[stage_nr].landing_point_world]
-        apogees = [r[stage_nr].apogee for r in results if r[stage_nr]
-                   and r[stage_nr].apogee]
+        max_altitude = [r[stage_nr].apogee.getAltitude() for r in results if r[stage_nr]
+                        and r[stage_nr].apogee]
         ignitions_theta = [
             r[stage_nr].theta_ignition for r in results if r[stage_nr] and r[stage_nr].theta_ignition]
         ignitions_altitude = [
             r[stage_nr].altitude_ignition for r in results if r[stage_nr] and r[stage_nr].altitude_ignition]
+        distances = [
+            r[stage_nr].distance for r in results if r[stage_nr] and r[stage_nr].distance]
+        bearings = [
+            r[stage_nr].bearing for r in results if r[stage_nr] and r[stage_nr].bearing]
 
         logging.debug("Results: distances in cartesian coordinates")
-        distances = []
-        bearings = []
-        for landing_point in landing_points:
-            if landing_point:
-                if geodetic_computation == geodetic_computation.FLAT:
-                    distance, bearing = compute_distance_and_bearing_flat(
-                        launch_point, landing_point)
-                else:
-                    geodesic = pyproj.Geod(ellps="WGS84")
-                    fwd_azimuth, back_azimuth, distance = geodesic.inv(
-                        launch_point.getLongitudeDeg(),
-                        launch_point.getLatitudeDeg(),
-                        landing_point.getLongitudeDeg(),
-                        landing_point.getLatitudeDeg())
-                    bearing = np.radians(fwd_azimuth)
-
-                distances.append(distance)
-                bearings.append(bearing)
-
-        max_altitude = []
-        for apogee in apogees:
-            if apogee:
-                max_altitude.append(apogee.getAltitude())
-
-        logging.debug("distances and bearings in polar coordinates")
+        logging.debug("distance and bearing in polar coordinates")
         logging.debug(distances)
-        logging.debug(bearings)
+        logging.debug(np.degrees(bearings))
 
         print(
             f"--- Stage number {stage_nr}: {general_parameters.stage_names[stage_nr]} ---")
@@ -1354,7 +1356,7 @@ def print_statistics(results, general_parameters):
 def export_results_csv(results, parametersets,
                        general_parameters, output_filename):
     """Create csv with all simulation results and its global parameterset."""
-
+    # TODO split output of parameters to relevant stage
     for stage_nr in range(general_parameters.num_stages):
         if general_parameters.num_stages > 1:
             fname = f"{output_filename}_{stage_nr}.csv"
@@ -1376,7 +1378,9 @@ def export_results_csv(results, parametersets,
                                    " landing lat / deg",
                                    " landing lon / deg",
                                    " landing x / m",
-                                   " landing y /m",
+                                   " landing y / m",
+                                   " landing distance / m",
+                                   " landing bearing / deg",
                                    " apogee / m",
                                    " ignition theta / deg",
                                    " ignition altitude / m"])
@@ -1402,6 +1406,8 @@ def export_results_csv(results, parametersets,
                             "%.6f" % r.landing_point_world.getLongitudeDeg(),
                             "%.2f" % r.landing_point_cartesian.x,
                             "%.2f" % r.landing_point_cartesian.y,
+                            "%.2f" % r.distance,
+                            "%.2f" % np.degrees(r.bearing),
                             "%.2f" % r.apogee.getAltitude(),
                             "%.2f" % r.theta_ignition,
                             "%.2f" % r.altitude_ignition])
@@ -1422,6 +1428,8 @@ def export_results_csv(results, parametersets,
                             "%.6f" % r.landing_point_world.getLongitudeDeg(),
                             "%.2f" % r.landing_point_cartesian.x,
                             "%.2f" % r.landing_point_cartesian.y,
+                            "%.2f" % r.distance,
+                            "%.2f" % np.degrees(r.bearing),
                             "%.2f" % r.apogee.getAltitude(),
                             "%.2f" % 0,
                             "%.2f" % 0])
@@ -1437,7 +1445,7 @@ def export_results_csv(results, parametersets,
                         "%.2f" % p.Caxial_factor,
                         "%.2f" % p.CN_factor,
                         "%.2f" % p.Cside_factor,
-                        0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0,
                         r.apogee.getAltitude(), 0, 0])
                 else:
                     resultwriter.writerow([
@@ -1451,7 +1459,7 @@ def export_results_csv(results, parametersets,
                         "%.2f" % p.Caxial_factor,
                         "%.2f" % p.CN_factor,
                         "%.2f" % p.Cside_factor,
-                        0, 0, 0, 0, 0, 0, 0])
+                        0, 0, 0, 0, 0, 0, 0, 0, 0])
 
 
 def export_results_kml(results, parametersets,
@@ -1590,6 +1598,14 @@ def create_plots(results, output_filename_in, general_parameters,
             apogees = np.zeros((n_simulations, 3))
             apogees[:, 2] = alt
             geodetic_computation = 'flat'
+            distances = rng.normal(1000, 1, n_simulations)
+            bearings = rng.normal(1000, 1, n_simulations)
+            ignitions_theta = rng.normal(1000, 1, n_simulations)
+            ignitions_altitude = rng.normal(1000, 1, n_simulations)
+            x = rng.normal(1000, 1, n_simulations)
+            y = rng.normal(1000, 1, n_simulations)
+            alt = rng.normal(1000, 1, n_simulations)
+            trajectories = [x, y, alt]
         else:
             # append valid results to lists
             landing_points_world = np.array([to_array_world(
@@ -1606,40 +1622,15 @@ def create_plots(results, output_filename_in, general_parameters,
                 r[stage_nr].theta_ignition for r in results if r[stage_nr] and r[stage_nr].theta_ignition]
             ignitions_altitude = [
                 r[stage_nr].altitude_ignition for r in results if r[stage_nr] and r[stage_nr].altitude_ignition]
+            distances = [
+                r[stage_nr].distance for r in results if r[stage_nr] and r[stage_nr].distance]
+            bearings = [
+                r[stage_nr].bearing for r in results if r[stage_nr] and r[stage_nr].bearing]
 
         n_simulations = apogees.shape[0]
         if n_simulations < 1:
             logging.warning("No landing points found")
             return
-
-        # TODO move into subfunction and share with print_statistics
-        landing_points = [
-            r[stage_nr].landing_point_world for r in results if r[stage_nr]]
-        launch_point = general_parameters.launch_point
-        geodetic_computation = general_parameters.geodetic_computation
-
-        distances = []
-        bearings = []
-        for landing_point in landing_points:
-            if landing_point:
-                if geodetic_computation == geodetic_computation.FLAT:
-                    distance, bearing = compute_distance_and_bearing_flat(
-                        launch_point, landing_point)
-                    bearing = np.degrees(bearing)
-                else:
-                    geodesic = pyproj.Geod(ellps="WGS84")
-                    fwd_azimuth, back_azimuth, distance = geodesic.inv(
-                        launch_point.getLongitudeDeg(),
-                        launch_point.getLatitudeDeg(),
-                        landing_point.getLongitudeDeg(),
-                        landing_point.getLatitudeDeg())
-                    bearing = np.radians(fwd_azimuth)
-
-                if bearing < 0.:
-                    bearing = bearing + 360.
-
-                distances.append(distance)
-                bearings.append(bearing)
 
         fig = plt.figure(constrained_layout=True)
         # TODO: Increase pad on the right
@@ -1799,7 +1790,7 @@ def create_plots(results, output_filename_in, general_parameters,
         # histograms only make sense for more than one result
         if len(bearings) > 1:
             ax_bearings.hist(
-                bearings,
+                np.degrees(bearings),
                 bins=[
                     0,
                     45,
