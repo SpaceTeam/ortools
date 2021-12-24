@@ -34,6 +34,7 @@ mpl.rcParams["axes.grid"] = True
 mpl.rcParams["axes.prop_cycle"] = cycler.cycler(
     color=("#7570b3", "#d95f02", "#1b9e77"), linestyle=("-", "--", ":"))
 line_color_map = mpl.cm.gist_rainbow
+line_color_map_jet = mpl.cm.jet
 
 PLOTS_ARE_TESTED = False
 WINDMODEL_TEST = False
@@ -150,12 +151,22 @@ def diana(directory, filename, config, output,
             options.getLaunchAltitude())
         logging.info("Launch Point {} found.".format(launch_point))
 
+        rocket = options.getRocket()
+        num_stages = rocket.getChildCount()
+        print("Rocket has {} stage(s):".format(num_stages))
+        stage_names = [r.getName() for r in rocket.getChildren()]
+        logging.info(stage_names)
+
         GeneralParameters = collections.namedtuple("GeneralParameters", [
             "launch_point",
-            "geodetic_computation"])
+            "geodetic_computation",
+            "num_stages",
+            "stage_names"])
         general_parameters = GeneralParameters(
             launch_point=launch_point,
-            geodetic_computation=geodetic_computation)
+            geodetic_computation=geodetic_computation,
+            num_stages=num_stages,
+            stage_names=stage_names)
 
         # get random parameters
         rocket_components, random_parameters = \
@@ -177,7 +188,8 @@ def diana(directory, filename, config, output,
                 parameterset = get_simulation_parameters(
                     orh, sim, rocket_components, random_parameters, False)
 
-            result = run_simulation(orh, sim, config, parameterset)
+            result = run_simulation(
+                orh, sim, config, parameterset, general_parameters)
 
             results.append(result)
             parametersets.append(parameterset)
@@ -329,7 +341,6 @@ def set_up_random_parameters(orh, sim, config):
     ignition_delays_max = []
     ignition_delays_min = []
 
-    print("Rocket has {} stage(s).".format(rocket.getStageCount()))
     for component in orhelper.JIterator(rocket):
         logging.debug("Component {} of type {}".format(component.getName(),
                                                        type(component)))
@@ -636,7 +647,7 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
         Cside_factor=Cside_factor)
 
 
-def run_simulation(orh, sim, config, parameterset, branch_number=0):
+def run_simulation(orh, sim, config, parameterset, general_parameters):
     """Run a single simulation and return the results.
 
     :return:
@@ -677,48 +688,66 @@ def run_simulation(orh, sim, config, parameterset, branch_number=0):
                     orh.openrocket.aerodynamics.Warning.LISTENERS_AFFECTED):
                 logging.info(warning)
 
-    # was there any exception thrown? only main branch is considered
-    simulation_exception_raised = False
-    events = sim.getSimulatedData().getBranch(0).getEvents()
-    for ev in events:
-        # how do I get the source of the exception?
-        # OR code: currentStatus.getWarnings()
-        if ev.getType() == ev.Type.EXCEPTION:
-            simulation_exception_raised = True
+    # process results
+    branch_ct = sim.getSimulatedData().getBranchCount()
+    num_stages = general_parameters.num_stages
+    logging.debug(
+        f'Branch count {branch_ct}, vs stage count {general_parameters.num_stages}')
 
-    # extract results only if simulation
-    # did not throw any exception
-    if not simulation_exception_raised:
-        apogee = get_apogee(orh, sim, branch_number)
-        landing_world, landing_cartesian = get_landing_site(
-            orh, sim, branch_number)
-        theta_ignition, altitude_ignition = get_ignition_tilt(
-            orh, sim, branch_number)
-        trajectory = get_trajectory(orh, sim, branch_number)
-    else:
-        logging.warning(
-            "Simulation threw an exception")
-        apogee = []
-        landing_world = []
-        landing_cartesian = []
-        theta_ignition = []
-        altitude_ignition = []
-        trajectory = []
-
+    # prepare lists for all stages' results
     Results = collections.namedtuple("Results", [
         "landing_point_world",
         "apogee",
         "trajectory",
         "landing_point_cartesian",
         "theta_ignition",
-        "altitude_ignition"])
-    r = Results(landing_point_world=landing_world,
-                apogee=apogee,
-                trajectory=trajectory,
-                landing_point_cartesian=landing_cartesian,
-                theta_ignition=theta_ignition,
-                altitude_ignition=altitude_ignition
-                )
+        "altitude_ignition"], defaults=(None,) * 6)
+
+    simulation_exception_raised = False
+    r = []
+
+    if branch_ct == num_stages:
+        for branch_nr in range(branch_ct):
+            # was there any exception thrown? -> skip results fo this stage
+            events = sim.getSimulatedData().getBranch(branch_nr).getEvents()
+            for ev in events:
+                # how do I get the source of the exception?
+                # OR code: currentStatus.getWarnings()
+                if ev.getType() == ev.Type.EXCEPTION:
+                    simulation_exception_raised = True
+                    break
+
+            # extract results only if simulation
+            # did not throw any exception
+            if not simulation_exception_raised and branch_nr < branch_ct:
+                # for branch_nr in
+                # range(sim.getSimulatedData().getBranchCount()):
+                apogee = get_apogee(orh, sim, branch_nr)
+                landing_world, landing_cartesian = get_landing_site(
+                    orh, sim, branch_nr)
+                # normally we are interested in the latest ignition only ->
+                # extract from last stage only
+                theta_ignition, altitude_ignition = get_ignition_tilt(
+                    orh, sim)
+                trajectory = get_trajectory(orh, sim, branch_nr)
+
+                r.append(Results(landing_point_world=landing_world,
+                                 apogee=apogee,
+                                 trajectory=trajectory,
+                                 landing_point_cartesian=landing_cartesian,
+                                 theta_ignition=theta_ignition,
+                                 altitude_ignition=altitude_ignition
+                                 ))
+            else:
+                logging.warning(
+                    f"Simulation of stage {branch_nr} threw an exception")
+                r.append(Results())
+
+    else:
+        logging.warning(
+            "Not the same number of simulation branches than stages")
+        r = Results()
+
     return r
 
 
@@ -1122,20 +1151,7 @@ def get_apogee(open_rocket_helper, simulation, branch_number=0):
     def index_at(t): return (
         np.abs(data[FlightDataType.TYPE_TIME] - t)).argmin()
 
-    # TODO how can I determine the stage triggering the flight event?
-    events = open_rocket_helper.get_events(simulation)
-    try:
-        ct_apogee = len(events[orhelper.FlightEvent.APOGEE])
-        logging.info('# apogee events found: {}'.format(ct_apogee))
-        t_apogee = events[orhelper.FlightEvent.APOGEE][0]
-    except BaseException:
-        if EXCEPTION_FOR_MISSING_EVENTS:
-            logging.warning(
-                'no apogee event found, search maximum within trajectory')
-            t_apogee = t[np.argmax(altitude)]
-        else:
-            logging.warning('no apogee event found, skip')
-            t_apogee = []
+    t_apogee = t[np.argmax(altitude)]
 
     if t_apogee:
         apogee = open_rocket_helper.openrocket.util.WorldCoordinate(
@@ -1209,13 +1225,14 @@ def get_landing_site(open_rocket_helper, simulation, branch_number=0):
     return landing_world, landing_cartesian
 
 
-def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
+def get_ignition_tilt(open_rocket_helper, simulation):
     """Return the tilt angle at ignition."""
+    # normally we are interested in the latest ignition only
     FlightDataType = orhelper.FlightDataType
     data = open_rocket_helper.get_timeseries(simulation, [
         FlightDataType.TYPE_TIME,
         FlightDataType.TYPE_ALTITUDE,
-        FlightDataType.TYPE_ORIENTATION_THETA], branch_number)
+        FlightDataType.TYPE_ORIENTATION_THETA], 0)
     t = np.array(data[FlightDataType.TYPE_TIME])
     theta = np.array(data[FlightDataType.TYPE_ORIENTATION_THETA])
     altitude = np.array(data[FlightDataType.TYPE_ALTITUDE])
@@ -1228,7 +1245,6 @@ def get_ignition_tilt(open_rocket_helper, simulation, branch_number=0):
         logging.info('# ignition events found: {}'.format(ct_ignitions))
 
         if ct_ignitions > 1:
-            # normally we are interested in the latest ignition only
             t_ignition = events[orhelper.FlightEvent.IGNITION][ct_ignitions - 1]
             logging.info("Ignition at {:.1f}s: ".format(t_ignition))
             theta_ignition = math.degrees(theta[index_at(t_ignition)])
@@ -1272,89 +1288,144 @@ def get_trajectory(open_rocket_helper, simulation, branch_number=0):
 
 def print_statistics(results, general_parameters):
     """Print statistics of all simulation results."""
-    landing_points = [r.landing_point_world for r in results]
+
     launch_point = general_parameters.launch_point
     geodetic_computation = general_parameters.geodetic_computation
-    apogees = [r.apogee for r in results]
-    ignitions_theta = [r.theta_ignition for r in results if r.theta_ignition]
-    ignitions_altitude = [
-        r.altitude_ignition for r in results if r.altitude_ignition]
 
-    logging.debug("Results: distances in cartesian coordinates")
-    distances = []
-    bearings = []
-    for landing_point in landing_points:
-        if landing_point:
-            if geodetic_computation == geodetic_computation.FLAT:
-                distance, bearing = compute_distance_and_bearing_flat(
-                    launch_point, landing_point)
-            else:
-                geodesic = pyproj.Geod(ellps="WGS84")
-                fwd_azimuth, back_azimuth, distance = geodesic.inv(
-                    launch_point.getLongitudeDeg(),
-                    launch_point.getLatitudeDeg(),
-                    landing_point.getLongitudeDeg(),
-                    landing_point.getLatitudeDeg())
-                bearing = np.radians(fwd_azimuth)
+    for stage_nr in range(general_parameters.num_stages):
+        landing_points = [
+            r[stage_nr].landing_point_world for r in results if r[stage_nr] and r[stage_nr].landing_point_world]
+        apogees = [r[stage_nr].apogee for r in results if r[stage_nr]
+                   and r[stage_nr].apogee]
+        ignitions_theta = [
+            r[stage_nr].theta_ignition for r in results if r[stage_nr] and r[stage_nr].theta_ignition]
+        ignitions_altitude = [
+            r[stage_nr].altitude_ignition for r in results if r[stage_nr] and r[stage_nr].altitude_ignition]
 
-            distances.append(distance)
-            bearings.append(bearing)
+        logging.debug("Results: distances in cartesian coordinates")
+        distances = []
+        bearings = []
+        for landing_point in landing_points:
+            if landing_point:
+                if geodetic_computation == geodetic_computation.FLAT:
+                    distance, bearing = compute_distance_and_bearing_flat(
+                        launch_point, landing_point)
+                else:
+                    geodesic = pyproj.Geod(ellps="WGS84")
+                    fwd_azimuth, back_azimuth, distance = geodesic.inv(
+                        launch_point.getLongitudeDeg(),
+                        launch_point.getLatitudeDeg(),
+                        landing_point.getLongitudeDeg(),
+                        landing_point.getLatitudeDeg())
+                    bearing = np.radians(fwd_azimuth)
 
-    max_altitude = []
-    for apogee in apogees:
-        if apogee:
-            max_altitude.append(apogee.getAltitude())
+                distances.append(distance)
+                bearings.append(bearing)
 
-    logging.debug("distances and bearings in polar coordinates")
-    logging.debug(distances)
-    logging.debug(bearings)
+        max_altitude = []
+        for apogee in apogees:
+            if apogee:
+                max_altitude.append(apogee.getAltitude())
 
-    # TODO how can one calculate the 2pi-safe statistics of the bearing
-    print("---")
-    print("Apogee: {:.1f}m ± {:.2f}m ".format(
-        np.mean(max_altitude), np.std(max_altitude)))
-    print(
-        "Rocket landing zone {:.1f}m ± {:.2f}m ".format(
-            np.mean(distances), np.std(distances))
-        + "bearing {:.1f}° ± {:.1f}° ".format(
-            np.degrees(np.mean(bearings)), np.degrees(np.std(bearings))))
-    if ignitions_theta:
-        print("Ignition at altitude: {:.1f}m ± {:.2f}m ".format(
-            np.mean(ignitions_altitude), np.std(ignitions_altitude)))
-        print(" at tilt angle: {:.1f}° ± {:.2f}° ".format(
-            np.mean(ignitions_theta), np.std(ignitions_theta)))
+        logging.debug("distances and bearings in polar coordinates")
+        logging.debug(distances)
+        logging.debug(bearings)
 
-    print("Based on {} valid simulation(s) of {}.".format(
-        len(distances), len(landing_points)))
+        print(
+            f"--- Stage number {stage_nr}: {general_parameters.stage_names[stage_nr]} ---")
+        print("Apogee: {:.1f}m ± {:.2f}m ".format(
+            np.mean(max_altitude), np.std(max_altitude)))
+        # TODO how can one calculate the 2pi-safe statistics of the bearing
+        print(
+            "Rocket landing zone {:.1f}m ± {:.2f}m ".format(
+                np.mean(distances), np.std(distances))
+            + "bearing {:.1f}° ± {:.1f}° ".format(
+                np.degrees(np.mean(bearings)), np.degrees(np.std(bearings))))
+        if ignitions_theta:
+            print("Ignition at altitude: {:.1f}m ± {:.2f}m ".format(
+                np.mean(ignitions_altitude), np.std(ignitions_altitude)))
+            print(" at tilt angle: {:.1f}° ± {:.2f}° ".format(
+                np.mean(ignitions_theta), np.std(ignitions_theta)))
+
+        print("Based on {} valid simulation(s).".format(
+            len(distances)))
 
 
 def export_results_csv(results, parametersets,
                        general_parameters, output_filename):
     """Create csv with all simulation results and its global parameterset."""
-    with open(output_filename + ".csv", 'w', newline='') as csvfile:
-        resultwriter = csv.writer(csvfile, delimiter=',')
-        resultwriter.writerow(["launch tilt / deg",
-                               " launch azimuth / deg",
-                               " thrust_factor / 1",
-                               " stage separation delay / s",
-                               " ignition delay / s",
-                               " fin cant / deg",
-                               " parachute CD / 1",
-                               " Caxial factor / 1",
-                               " CN factor / 1",
-                               " Cside factor / 1",
-                               " landing lat / deg",
-                               " landing lon / deg",
-                               " landing x / m",
-                               " landing y /m",
-                               " apogee / m",
-                               " ignition theta / deg",
-                               " ignition altitude / m"])
-        for r, p in zip(results, parametersets):
-            if r.landing_point_world:
-                # valid solution
-                if r.theta_ignition:
-                    # multi stage
+
+    for stage_nr in range(general_parameters.num_stages):
+        if general_parameters.num_stages > 1:
+            fname = f"{output_filename}_{stage_nr}.csv"
+        else:
+            fname = f"{output_filename}.csv"
+
+        with open(fname, 'w', newline='') as csvfile:
+            resultwriter = csv.writer(csvfile, delimiter=',')
+            resultwriter.writerow(["launch tilt / deg",
+                                   " launch azimuth / deg",
+                                   " thrust_factor / 1",
+                                   " stage separation delay / s",
+                                   " ignition delay / s",
+                                   " fin cant / deg",
+                                   " parachute CD / 1",
+                                   " Caxial factor / 1",
+                                   " CN factor / 1",
+                                   " Cside factor / 1",
+                                   " landing lat / deg",
+                                   " landing lon / deg",
+                                   " landing x / m",
+                                   " landing y /m",
+                                   " apogee / m",
+                                   " ignition theta / deg",
+                                   " ignition altitude / m"])
+            for rs, p in zip(results, parametersets):
+                r = rs[stage_nr]
+
+                if r and r.landing_point_world:
+                    # valid solution
+                    if r.theta_ignition:
+                        # multi stage
+                        resultwriter.writerow([
+                            "%.2f" % p.tilt,
+                            "%.2f" % p.azimuth,
+                            "%.2f" % p.thrust_factor,
+                            p.separation_delays,
+                            p.ignition_delays,
+                            p.fin_cants,
+                            p.parachute_cds,
+                            "%.2f" % p.Caxial_factor,
+                            "%.2f" % p.CN_factor,
+                            "%.2f" % p.Cside_factor,
+                            "%.6f" % r.landing_point_world.getLatitudeDeg(),
+                            "%.6f" % r.landing_point_world.getLongitudeDeg(),
+                            "%.2f" % r.landing_point_cartesian.x,
+                            "%.2f" % r.landing_point_cartesian.y,
+                            "%.2f" % r.apogee.getAltitude(),
+                            "%.2f" % r.theta_ignition,
+                            "%.2f" % r.altitude_ignition])
+                    else:
+                        # single stage
+                        resultwriter.writerow([
+                            "%.2f" % p.tilt,
+                            "%.2f" % p.azimuth,
+                            "%.2f" % p.thrust_factor,
+                            p.separation_delays,
+                            p.ignition_delays,
+                            p.fin_cants,
+                            p.parachute_cds,
+                            "%.2f" % p.Caxial_factor,
+                            "%.2f" % p.CN_factor,
+                            "%.2f" % p.Cside_factor,
+                            "%.6f" % r.landing_point_world.getLatitudeDeg(),
+                            "%.6f" % r.landing_point_world.getLongitudeDeg(),
+                            "%.2f" % r.landing_point_cartesian.x,
+                            "%.2f" % r.landing_point_cartesian.y,
+                            "%.2f" % r.apogee.getAltitude(),
+                            "%.2f" % 0,
+                            "%.2f" % 0])
+                elif r and r.apogee:
                     resultwriter.writerow([
                         "%.2f" % p.tilt,
                         "%.2f" % p.azimuth,
@@ -1366,15 +1437,9 @@ def export_results_csv(results, parametersets,
                         "%.2f" % p.Caxial_factor,
                         "%.2f" % p.CN_factor,
                         "%.2f" % p.Cside_factor,
-                        "%.6f" % r.landing_point_world.getLatitudeDeg(),
-                        "%.6f" % r.landing_point_world.getLongitudeDeg(),
-                        "%.2f" % r.landing_point_cartesian.x,
-                        "%.2f" % r.landing_point_cartesian.y,
-                        "%.2f" % r.apogee.getAltitude(),
-                        "%.2f" % r.theta_ignition,
-                        "%.2f" % r.altitude_ignition])
+                        0, 0, 0, 0,
+                        r.apogee.getAltitude(), 0, 0])
                 else:
-                    # single stage
                     resultwriter.writerow([
                         "%.2f" % p.tilt,
                         "%.2f" % p.azimuth,
@@ -1386,94 +1451,70 @@ def export_results_csv(results, parametersets,
                         "%.2f" % p.Caxial_factor,
                         "%.2f" % p.CN_factor,
                         "%.2f" % p.Cside_factor,
-                        "%.6f" % r.landing_point_world.getLatitudeDeg(),
-                        "%.6f" % r.landing_point_world.getLongitudeDeg(),
-                        "%.2f" % r.landing_point_cartesian.x,
-                        "%.2f" % r.landing_point_cartesian.y,
-                        "%.2f" % r.apogee.getAltitude(),
-                        "%.2f" % 0,
-                        "%.2f" % 0])
-            elif r.apogee:
-                resultwriter.writerow([
-                    "%.2f" % p.tilt,
-                    "%.2f" % p.azimuth,
-                    "%.2f" % p.thrust_factor,
-                    p.separation_delays,
-                    p.ignition_delays,
-                    p.fin_cants,
-                    p.parachute_cds,
-                    "%.2f" % p.Caxial_factor,
-                    "%.2f" % p.CN_factor,
-                    "%.2f" % p.Cside_factor,
-                    0, 0, 0, 0,
-                    r.apogee.getAltitude(), 0, 0])
-            else:
-                resultwriter.writerow([
-                    "%.2f" % p.tilt,
-                    "%.2f" % p.azimuth,
-                    "%.2f" % p.thrust_factor,
-                    p.separation_delays,
-                    p.ignition_delays,
-                    p.fin_cants,
-                    p.parachute_cds,
-                    "%.2f" % p.Caxial_factor,
-                    "%.2f" % p.CN_factor,
-                    "%.2f" % p.Cside_factor,
-                    0, 0, 0, 0, 0, 0, 0])
+                        0, 0, 0, 0, 0, 0, 0])
 
 
 def export_results_kml(results, parametersets,
                        general_parameters, output_filename):
     """Create kml with all landing positions. """
-    kml = simplekml.Kml()
-    style = simplekml.Style()
-    style.labelstyle.color = simplekml.Color.yellow  # color the text
-    style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
 
-    # add mark for launch site
-    pnt = kml.newpoint(name="Launch")
-    pnt.coords = [(
-        general_parameters.launch_point.getLongitudeDeg(),
-        general_parameters.launch_point.getLatitudeDeg())]
+    for stage_nr in range(general_parameters.num_stages):
 
-    # add landing points
-    for r in results:
-        if r.landing_point_world:
-            pnt = kml.newpoint()
-            pnt.coords = [(
-                r.landing_point_world.getLongitudeDeg(),
-                r.landing_point_world.getLatitudeDeg())]
-            pnt.style = style
+        kml = simplekml.Kml()
+        style = simplekml.Style()
+        style.labelstyle.color = simplekml.Color.yellow  # color the text
+        style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
 
-    # add confidence ellipses
-    def to_array_world(coordinate):
-        if coordinate:
-            return np.array([coordinate.getLatitudeDeg(),
-                            coordinate.getLongitudeDeg(),
-                            coordinate.getAltitude()])
-    landing_points_world = np.array([to_array_world(
-        r.landing_point_world) for r in results if r.landing_point_world])
-    x = landing_points_world[:, 1]
-    y = landing_points_world[:, 0]
-    if len(x) > 2:
-        ellipse1 = calc_confidence_ellipse(x, y, n_std=1)
-        pol = kml.newpolygon(name='1 sigma confidence ellipse')
-        pol.outerboundaryis = list(map(tuple, ellipse1))
-        pol.style.linestyle.color = simplekml.Color.green
-        pol.style.linestyle.width = 5
-        pol.style.polystyle.color = simplekml.Color.changealphaint(
-            100, simplekml.Color.green)
+        # add mark for launch site
+        pnt = kml.newpoint(name="Launch")
+        pnt.coords = [(
+            general_parameters.launch_point.getLongitudeDeg(),
+            general_parameters.launch_point.getLatitudeDeg())]
 
-        ellipse3 = calc_confidence_ellipse(x, y, n_std=3)
-        pol = kml.newpolygon(name='3 sigma confidence ellipse')
-        pol.outerboundaryis = list(map(tuple, ellipse3))
-        pol.style.linestyle.color = simplekml.Color.red
-        pol.style.linestyle.width = 5
-        pol.style.polystyle.color = simplekml.Color.changealphaint(
-            100, simplekml.Color.red)
+        # add landing points
+        for rs in results:
+            r = rs[stage_nr]
+            if r and r.landing_point_world:
+                pnt = kml.newpoint()
+                pnt.coords = [(
+                    r.landing_point_world.getLongitudeDeg(),
+                    r.landing_point_world.getLatitudeDeg())]
+                pnt.style = style
 
-    # save results
-    kml.save(output_filename + "_landingscatter.kml")
+        # add confidence ellipses
+        def to_array_world(coordinate):
+            if coordinate:
+                return np.array([coordinate.getLatitudeDeg(),
+                                coordinate.getLongitudeDeg(),
+                                coordinate.getAltitude()])
+        landing_points_world = np.array([to_array_world(r[stage_nr].landing_point_world)
+                                        for r in results if r[stage_nr] and r[stage_nr].landing_point_world])
+        x = landing_points_world[:, 1]
+        y = landing_points_world[:, 0]
+        if len(x) > 2:
+            ellipse1 = calc_confidence_ellipse(x, y, n_std=1)
+            pol = kml.newpolygon(name='1 sigma confidence ellipse')
+            pol.outerboundaryis = list(map(tuple, ellipse1))
+            pol.style.linestyle.color = simplekml.Color.green
+            pol.style.linestyle.width = 5
+            pol.style.polystyle.color = simplekml.Color.changealphaint(
+                100, simplekml.Color.green)
+
+            ellipse3 = calc_confidence_ellipse(x, y, n_std=3)
+            pol = kml.newpolygon(name='3 sigma confidence ellipse')
+            pol.outerboundaryis = list(map(tuple, ellipse3))
+            pol.style.linestyle.color = simplekml.Color.red
+            pol.style.linestyle.width = 5
+            pol.style.polystyle.color = simplekml.Color.changealphaint(
+                100, simplekml.Color.red)
+
+        if general_parameters.num_stages > 1:
+            fname = f"{output_filename}_{stage_nr}_landingscatter.kml"
+        else:
+            fname = f"{output_filename}_landingscatter.kml"
+
+        # save results
+        kml.save(fname)
 
 
 def compute_distance_and_bearing_flat(from_, to):
@@ -1487,7 +1528,7 @@ def compute_distance_and_bearing_flat(from_, to):
         Second coordinate
 
     :return:
-        A tuple containing (distance in m, bearing in °)
+        A tuple containing (distance in m, bearing in rad)
     """
     # uses the world coordinates used by OR if
     # geodetic_computation=FLAT is set
@@ -1505,7 +1546,7 @@ def compute_distance_and_bearing_flat(from_, to):
 
 
 # TODO: Try to refactor this ugly plotting function
-def create_plots(results, output_filename, general_parameters,
+def create_plots(results, output_filename_in, general_parameters,
                  plot_coordinate_type="flat", results_are_shown=False):
     """Create, store and optionally show the plots of the results.
 
@@ -1524,182 +1565,408 @@ def create_plots(results, output_filename, general_parameters,
                             coordinate.y,
                             coordinate.z])
 
-    if PLOTS_ARE_TESTED:
-        # Test Data
-        rng = np.random.default_rng()
-        n_simulations = 1000
-        lat = rng.normal(55, 2, n_simulations)
-        lon = rng.normal(20, 1, n_simulations)
-        landing_points_world = np.array([lat, lon]).T
-        landing_points_cartesian = np.array([lat, lon]).T
-        alt = rng.normal(15346, 17, n_simulations)
-        apogees = np.zeros((n_simulations, 3))
-        apogees[:, 2] = alt
-        geodetic_computation = 'flat'
-    else:
-        landing_points_world = np.array([to_array_world(
-            r.landing_point_world) for r in results if r.landing_point_world])
-        landing_points_cartesian = np.array([to_array_cartesian(
-            r.landing_point_cartesian) for r in results if r.landing_point_cartesian])
-        launch_point = to_array_world(general_parameters.launch_point)
+    nominal_trajectories = []
+    ellipses_1s = []
+    ellipses_3s = []
+    num_stages = []
+
+    for stage_nr in range(general_parameters.num_stages):
+        num_stages.append(stage_nr)
+
+        if general_parameters.num_stages > 1:
+            output_filename = f"{output_filename_in}_{stage_nr}"
+        else:
+            output_filename = output_filename_in
+
+        if PLOTS_ARE_TESTED:
+            # Test Data
+            rng = np.random.default_rng()
+            n_simulations = 1000
+            lat = rng.normal(55, 2, n_simulations)
+            lon = rng.normal(20, 1, n_simulations)
+            landing_points_world = np.array([lat, lon]).T
+            landing_points_cartesian = np.array([lat, lon]).T
+            alt = rng.normal(15346, 17, n_simulations)
+            apogees = np.zeros((n_simulations, 3))
+            apogees[:, 2] = alt
+            geodetic_computation = 'flat'
+        else:
+            # append valid results to lists
+            landing_points_world = np.array([to_array_world(
+                r[stage_nr].landing_point_world) for r in results if r[stage_nr] and r[stage_nr].landing_point_world])
+            landing_points_cartesian = np.array([to_array_cartesian(
+                r[stage_nr].landing_point_cartesian) for r in results if r[stage_nr] and r[stage_nr].landing_point_cartesian])
+            launch_point = to_array_world(general_parameters.launch_point)
+            geodetic_computation = general_parameters.geodetic_computation
+            apogees = np.array([to_array_world(r[stage_nr].apogee)
+                               for r in results if r[stage_nr] and r[stage_nr].apogee])
+            trajectories = [
+                r[stage_nr].trajectory for r in results if r[stage_nr]]
+            ignitions_theta = [
+                r[stage_nr].theta_ignition for r in results if r[stage_nr] and r[stage_nr].theta_ignition]
+            ignitions_altitude = [
+                r[stage_nr].altitude_ignition for r in results if r[stage_nr] and r[stage_nr].altitude_ignition]
+
+        n_simulations = apogees.shape[0]
+        if n_simulations < 1:
+            logging.warning("No landing points found")
+            return
+
+        # TODO move into subfunction and share with print_statistics
+        landing_points = [
+            r[stage_nr].landing_point_world for r in results if r[stage_nr]]
+        launch_point = general_parameters.launch_point
         geodetic_computation = general_parameters.geodetic_computation
-        apogees = np.array([to_array_world(r.apogee)
-                           for r in results if r.apogee])
-        trajectories = [r.trajectory for r in results]
-        ignitions_theta = [r.theta_ignition for r in results]
-        ignitions_altitude = [r.altitude_ignition for r in results]
 
-    n_simulations = apogees.shape[0]
-    if n_simulations < 1:
-        logging.warning("No landing points found")
-        return
+        distances = []
+        bearings = []
+        for landing_point in landing_points:
+            if landing_point:
+                if geodetic_computation == geodetic_computation.FLAT:
+                    distance, bearing = compute_distance_and_bearing_flat(
+                        launch_point, landing_point)
+                    bearing = np.degrees(bearing)
+                else:
+                    geodesic = pyproj.Geod(ellps="WGS84")
+                    fwd_azimuth, back_azimuth, distance = geodesic.inv(
+                        launch_point.getLongitudeDeg(),
+                        launch_point.getLatitudeDeg(),
+                        landing_point.getLongitudeDeg(),
+                        landing_point.getLatitudeDeg())
+                    bearing = np.radians(fwd_azimuth)
 
-    fig = plt.figure(constrained_layout=True)
-    # TODO: Increase pad on the right
-    spec = mpl.gridspec.GridSpec(nrows=1, ncols=2, figure=fig,
-                                 width_ratios=[1.5, 1],)
-    ax_trajectories = fig.add_subplot(spec[0, 0], projection='3d')
-    ax_landing_points = fig.add_subplot(spec[0, 1])
+                if bearing < 0.:
+                    bearing = bearing + 360.
 
-    # Scatter plot of landing coordinates
-    ax_lps = ax_landing_points
-    ax_lps.set_title("Landing Points")
-    if plot_coordinate_type == "flat":
-        # OR simulates with cartesian coordinates -> take them directly
-        x = landing_points_cartesian[:, 0]
-        y = landing_points_cartesian[:, 1]
-        x0 = 0
-        y0 = 0
-        ax_lps.set_xlabel(r"$\Delta x$ in m")
-        ax_lps.set_ylabel(r"$\Delta y$ in m")
-    elif plot_coordinate_type == "wgs84":
-        # use world coordinates with OR's geodetic_computation implementation
-        x = landing_points_world[:, 1]
-        y = landing_points_world[:, 0]
-        x0 = launch_point[1]
-        y0 = launch_point[0]
-        ax_lps.set_xlabel("Longitude in °")
-        ax_lps.set_ylabel("Latitude in °")
-    else:
-        raise ValueError(
-            "Coordinate type {} is not supported for plotting! ".format(
-                plot_coordinate_type)
-            + "Valid values are 'flat' and 'wgs84'.")
-    ax_lps.plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
-    ax_lps.plot(x, y, "r.", markersize=3, zorder=1, label="Landing")
+                distances.append(distance)
+                bearings.append(bearing)
 
-    colors_lps = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
-    linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
+        fig = plt.figure(constrained_layout=True)
+        # TODO: Increase pad on the right
+        spec = mpl.gridspec.GridSpec(nrows=1, ncols=2, figure=fig,
+                                     width_ratios=[1.5, 1],)
+        ax_trajectories = fig.add_subplot(spec[0, 0], projection='3d')
+        ax_landing_points = fig.add_subplot(spec[0, 1])
 
-    if len(x) > 2:
-        plot_confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
-                                edgecolor=colors_lps[2], ls=linestyles[0])
-        plot_confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
-                                edgecolor=colors_lps[0], ls=linestyles[2])
+        # Scatter plot of landing coordinates
+        ax_lps = ax_landing_points
+        ax_lps.set_title("Landing Points")
+        if plot_coordinate_type == "flat":
+            # OR simulates with cartesian coordinates -> take them directly
+            x = landing_points_cartesian[:, 0]
+            y = landing_points_cartesian[:, 1]
+            x0 = 0
+            y0 = 0
+            ax_lps.set_xlabel(r"$\Delta x$ in m")
+            ax_lps.set_ylabel(r"$\Delta y$ in m")
+        elif plot_coordinate_type == "wgs84":
+            # use world coordinates with OR's geodetic_computation
+            # implementation
+            x = landing_points_world[:, 1]
+            y = landing_points_world[:, 0]
+            x0 = launch_point.getLongitudeDeg()
+            y0 = launch_point.getLatitudeDeg()
+            ax_lps.set_xlabel("Longitude in °")
+            ax_lps.set_ylabel("Latitude in °")
+        else:
+            raise ValueError(
+                "Coordinate type {} is not supported for plotting! ".format(
+                    plot_coordinate_type)
+                + "Valid values are 'flat' and 'wgs84'.")
+        ax_lps.plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
+        ax_lps.plot(x, y, "r.", markersize=3, zorder=1, label="Landing")
 
-    ax_lps.legend()
-    ax_lps.ticklabel_format(useOffset=False, style="plain")
+        colors_lps = mpl.rcParams["axes.prop_cycle"].by_key()["color"]
+        linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
 
-    # Plot the trajectories
-    ax_trajectories.set_title("Trajectories")
-    colors = line_color_map(np.linspace(0, 1, len(trajectories)))
-    if plot_coordinate_type == "flat":
-        
-                                
-        for trajectory, color in zip(trajectories, colors):
-            if trajectory:
-                # valid trajectory
-                traj_x, traj_y, alt = trajectory
-                ax_trajectories.plot(
-                    xs=traj_x, ys=traj_y, zs=alt, color=color, linestyle="-")
-        # plot confidence ellipse, x+y are still the landing plots
         if len(x) > 2:
-            zmin, zmax = ax_trajectories.get_zlim()
-            ellipse = calc_confidence_ellipse(x, y, n_std=1)
-            ax_trajectories.plot(
-                ellipse[:,0], ellipse[:,1], zmin+0*ellipse[:,0], label=r"$1\sigma$",
-                                    color=colors_lps[2], ls=linestyles[0])  
-            ellipse = calc_confidence_ellipse(x, y, n_std=3)
-            ax_trajectories.plot(
-                ellipse[:,0], ellipse[:,1], zmin+0*ellipse[:,0], label=r"$3\sigma$",
-                                    color=colors_lps[0], ls=linestyles[2])                          
-                                
-        ax_trajectories.ticklabel_format(useOffset=False, style="plain")
-        # set the xspan and yspan identical, but do not make symmetrical
-        xleft, xright = ax_trajectories.get_xlim()
-        yleft, yright = ax_trajectories.get_ylim()
-        max_distance = max(xright - xleft, yright - yleft)
-        ax_trajectories.set_xlim(xleft, xleft + max_distance)
-        ax_trajectories.set_ylim(yleft, yleft + max_distance)
-        # set the xlim and ylim of the scatter plot identically
-        ax_lps.set_xlim(xleft, xleft + max_distance)
-        ax_lps.set_ylim(yleft, yleft + max_distance)
+            plot_confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
+                                    edgecolor=colors_lps[2], ls=linestyles[0])
+            plot_confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
+                                    edgecolor=colors_lps[0], ls=linestyles[2])
 
-        ax_trajectories.set_xlabel("x in m")
-        ax_trajectories.set_ylabel("y in m")
-    elif plot_coordinate_type == "wgs84":
-        # TODO plot trajectory in WGS84 instead of x,y
-        for trajectory, color in zip(trajectories, colors):
-            if trajectory:
-                x, y, alt = trajectory
+        ax_lps.legend()
+        ax_lps.ticklabel_format(useOffset=False, style="plain")
+
+        # save nominal trajectory
+        nominal_trajectories.append(trajectories[0])
+        # Plot the trajectories
+        ax_trajectories.set_title("Trajectories")
+        colors = line_color_map(np.linspace(0, 1, len(trajectories)))
+        if plot_coordinate_type == "flat":
+            for trajectory, color in zip(trajectories, colors):
+                if trajectory:
+                    # valid trajectory
+                    traj_x, traj_y, alt = trajectory
+                    ax_trajectories.plot(
+                        xs=traj_x, ys=traj_y, zs=alt, color=color, linestyle="-")
+            # plot confidence ellipse, x+y are still the landing plots
+            if len(x) > 2:
+                zmin, zmax = ax_trajectories.get_zlim()
+                ellipse_1s = calc_confidence_ellipse(x, y, n_std=1)
                 ax_trajectories.plot(
-                    xs=x, ys=y, zs=alt, color=color, linestyle="-")
-        ax_trajectories.ticklabel_format(useOffset=False, style="plain")
-        ax_trajectories.set_xlabel("x in m")
-        ax_trajectories.set_ylabel("y in m")
-    else:
-        raise ValueError(
-            "Coordinate type {} is not supported for plotting! ".format(
-                plot_coordinate_type)
-            + "Valid values are 'flat' and 'wgs84'.")
-    ax_trajectories.set_zlabel("altitude in m")
+                    ellipse_1s[:, 0], ellipse_1s[:, 1], zmin + 0 * ellipse_1s[:, 0], label=r"$1\sigma$",
+                    color=colors_lps[2], ls=linestyles[0])
+                ellipse_3s = calc_confidence_ellipse(x, y, n_std=3)
+                ax_trajectories.plot(
+                    ellipse_3s[:, 0], ellipse_3s[:, 1], zmin + 0 * ellipse_3s[:, 0], label=r"$3\sigma$",
+                    color=colors_lps[0], ls=linestyles[2])
+            else:
+                ellipse_1s = None
+                ellipse_3s = None
 
-    # Save and show the figure
-    plt.suptitle("Dispersion Analysis of {} Simulations".format(n_simulations))
-    plt.savefig(output_filename + "_diana.pdf")
-    if results_are_shown:
-        plt.show()
+            ax_trajectories.ticklabel_format(useOffset=False, style="plain")
+            # set the xspan and yspan identical
+            # TODO make it symmetrical
+            xleft, xright = ax_trajectories.get_xlim()
+            yleft, yright = ax_trajectories.get_ylim()
+            max_distance = max(xright - xleft, yright - yleft)
+            ax_trajectories.set_xlim(xleft, xleft + max_distance)
+            ax_trajectories.set_ylim(yleft, yleft + max_distance)
+            # set the xlim and ylim of the scatter plot identically
+            ax_lps.set_xlim(xleft, xleft + max_distance)
+            ax_lps.set_ylim(yleft, yleft + max_distance)
 
-    figHist = plt.figure(constrained_layout=True)
-    spec = mpl.gridspec.GridSpec(nrows=1, ncols=3, figure=figHist,
-                                 width_ratios=[1, 1, 1])
-    ax_apogees = figHist.add_subplot(spec[0, 0])
-    ax_ignition_tilt = figHist.add_subplot(spec[0, 1])
-    ax_ignition_altitude = figHist.add_subplot(spec[0, 2])
+            ax_trajectories.set_xlabel("x in m")
+            ax_trajectories.set_ylabel("y in m")
+        elif plot_coordinate_type == "wgs84":
+            # TODO plot trajectory in WGS84 instead of x,y
+            for trajectory, color in zip(trajectories, colors):
+                if trajectory:
+                    x, y, alt = trajectory
+                    ax_trajectories.plot(
+                        xs=x, ys=y, zs=alt, color=color, linestyle="-")
 
-    # Histogram of apogee altitudes
-    ax_apogees.set_title("Apogees")
-    n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
-    ax_apogees.hist(apogees[:, 2], bins=n_bins, orientation="vertical", ec="k")
-    ax_apogees.set_xlabel("Altitude in m")
-    ax_apogees.set_ylabel("Number of Simulations")
+            # TODO add some ellipses here as well
+            ellipse_1s = None
+            ellipse_3s = None
+            ax_trajectories.ticklabel_format(useOffset=False, style="plain")
+            ax_trajectories.set_xlabel("x in m")
+            ax_trajectories.set_ylabel("y in m")
+        else:
+            raise ValueError(
+                "Coordinate type {} is not supported for plotting! ".format(
+                    plot_coordinate_type)
+                + "Valid values are 'flat' and 'wgs84'.")
+        ax_trajectories.set_zlabel("altitude in m")
 
-    # Histogram of tilt at ignition
-    ax_ignition_tilt.set_title("Last Ignition Event")
-    n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
-    ax_ignition_tilt.hist(
-        ignitions_theta,
-        bins=n_bins,
-        orientation="vertical",
-        ec="k")
-    ax_ignition_tilt.set_xlabel("Tilt in °")
-    ax_ignition_tilt.set_ylabel("Number of Simulations")
-    # Histogram of altitude at ignition
-    ax_ignition_altitude.set_title("Last Ignition Event")
-    n_bins = int(round(1 + 3.322 * math.log(n_simulations), 0))
-    ax_ignition_altitude.hist(
-        ignitions_altitude,
-        bins=n_bins,
-        orientation="vertical",
-        ec="k")
-    ax_ignition_altitude.set_xlabel("Altitude in m")
-    ax_ignition_altitude.set_ylabel("Number of Simulations")
+        ellipses_1s.append(ellipse_1s)
+        ellipses_3s.append(ellipse_3s)
 
-    # Save and show the figure
-    plt.suptitle("Statistics of {} Simulations".format(n_simulations))
-    plt.savefig(output_filename + "_stats.pdf")
-    if results_are_shown:
-        plt.show()
+        # Save and show the figure
+        plt.suptitle(
+            "Dispersion Analysis of {} Simulations".format(n_simulations))
+        plt.savefig(output_filename + "_diana.pdf")
+        if results_are_shown:
+            plt.show()
+
+        # Histograms
+        n_bins = min(
+            n_simulations, int(
+                round(
+                    1 + 3.322 * math.log(n_simulations), 0)))
+
+        figHist = plt.figure(constrained_layout=True)
+        spec = mpl.gridspec.GridSpec(nrows=1, ncols=3, figure=figHist,
+                                     width_ratios=[1, 1, 1])
+        ax_apogees = figHist.add_subplot(spec[0, 0])
+        ax_distances = figHist.add_subplot(spec[0, 1])
+        ax_bearings = figHist.add_subplot(spec[0, 2])
+
+        # Histogram of apogee altitudes
+        ax_apogees.set_title("Apogees")
+        # histograms only make sense for more than one result
+        if len(apogees[:, 2]) > 1:
+            ax_apogees.hist(apogees[:, 2], bins=n_bins,
+                            orientation="vertical", ec="k")
+            ax_apogees.set_xlabel("Altitude in m")
+            ax_apogees.set_ylabel("Number of Simulations")
+
+        # Histogram of landing distance
+        ax_distances.set_title("Landing Distances")
+        # histograms only make sense for more than one result
+        if len(distances) > 1:
+            ax_distances.hist(
+                distances,
+                bins=n_bins,
+                orientation="vertical",
+                ec="k")
+            ax_distances.set_xlabel("Distance in m")
+            ax_distances.set_ylabel("Number of Simulations")
+
+        # Histogram of landing bearing
+        ax_bearings.set_title("Landing Bearing")
+        # histograms only make sense for more than one result
+        if len(bearings) > 1:
+            ax_bearings.hist(
+                bearings,
+                bins=[
+                    0,
+                    45,
+                    90,
+                    135,
+                    180,
+                    225,
+                    270,
+                    315,
+                    360],
+                range=(
+                    0,
+                    360),
+                orientation="vertical",
+                ec="k")
+            ax_bearings.set_xlabel("Bearing in °")
+            ax_bearings.set_ylabel("Number of Simulations")
+
+        # Save and show the figure
+        plt.suptitle("Statistics of {} Simulations".format(n_simulations))
+        plt.savefig(output_filename + "_stats_general.pdf")
+        if results_are_shown:
+            plt.show()
+
+        figHistIgnition = plt.figure(constrained_layout=True)
+        spec = mpl.gridspec.GridSpec(nrows=1, ncols=2, figure=figHistIgnition,
+                                     width_ratios=[1, 1])
+        ax_ignition_tilt = figHistIgnition.add_subplot(spec[0, 0])
+        ax_ignition_altitude = figHistIgnition.add_subplot(spec[0, 1])
+
+        # ignition stats for upper-most stage
+        if stage_nr < 1 and general_parameters.num_stages > 1:
+            # Histogram of tilt at ignition
+            ax_ignition_tilt.set_title("Last Ignition Event")
+            # histograms only make sense for more than one result
+            if len(ignitions_theta) > 1:
+                ax_ignition_tilt.hist(
+                    ignitions_theta,
+                    bins=n_bins,
+                    orientation="vertical",
+                    ec="k")
+                ax_ignition_tilt.set_xlabel("Tilt in °")
+                ax_ignition_tilt.set_ylabel("Number of Simulations")
+
+            # Histogram of altitude at ignition
+            ax_ignition_altitude.set_title("Last Ignition Event")
+            # histograms only make sense for more than one result
+            if len(ignitions_altitude) > 1:
+                ax_ignition_altitude.hist(
+                    ignitions_altitude,
+                    bins=n_bins,
+                    orientation="vertical",
+                    ec="k")
+                ax_ignition_altitude.set_xlabel("Altitude in m")
+                ax_ignition_altitude.set_ylabel("Number of Simulations")
+
+            # Save and show the figure
+            plt.suptitle("Statistics of {} Simulations".format(n_simulations))
+            plt.savefig(output_filename + "_stats_ignition.pdf")
+            if results_are_shown:
+                plt.show()
+
+    if len(nominal_trajectories) > 1:
+        fig = plt.figure(constrained_layout=True)
+
+        # TODO: Increase pad on the right
+        spec = mpl.gridspec.GridSpec(nrows=1, ncols=2, figure=fig,
+                                     width_ratios=[1.5, 1],)
+        ax_trajectories = fig.add_subplot(spec[0, 0], projection='3d')
+        ax_landing_points = fig.add_subplot(spec[0, 1])
+
+        # Scatter plot of landing coordinates
+        ax_lps = ax_landing_points
+        ax_lps.set_title("Landing Points")
+        if plot_coordinate_type == "flat":
+            # OR simulates with cartesian coordinates -> take them directly
+            x0 = 0
+            y0 = 0
+            ax_lps.set_xlabel(r"$\Delta x$ in m")
+            ax_lps.set_ylabel(r"$\Delta y$ in m")
+        elif plot_coordinate_type == "wgs84":
+            # use world coordinates with OR's geodetic_computation
+            # implementation
+            x0 = launch_point.getLongitudeDeg()
+            y0 = launch_point.getLatitudeDeg()
+            ax_lps.set_xlabel("Longitude in °")
+            ax_lps.set_ylabel("Latitude in °")
+        ax_lps.plot(x0, y0, "bx", markersize=5, zorder=0, label="Launch")
+
+        linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
+        colors = line_color_map_jet(
+            np.linspace(0, 1, len(nominal_trajectories)))
+
+        for nominal_trajectory, ellipse_1s, ellipse_3s, color, stage_nr in zip(
+                nominal_trajectories, ellipses_1s, ellipses_3s, colors, num_stages):
+
+            if ellipse_1s is not None:
+                ax_lps.plot(
+                    ellipse_1s[:, 0], ellipse_1s[:, 1], label=f"Stage {stage_nr} " + r"$1\sigma$",
+                    color=color, ls=linestyles[0])
+                ax_lps.plot(
+                    ellipse_3s[:, 0], ellipse_3s[:, 1], label=f"Stage {stage_nr} " + r"$3\sigma$",
+                    color=color, ls=linestyles[2])
+
+            # Plot the trajectories
+            ax_trajectories.set_title("Trajectories")
+            if plot_coordinate_type == "flat":
+                traj_x, traj_y, alt = nominal_trajectory
+                ax_trajectories.plot(
+                    xs=traj_x,
+                    ys=traj_y,
+                    zs=alt,
+                    color=color,
+                    linestyle="-",
+                    label=f"stage {stage_nr}")
+
+                # plot confidence ellipse, x+y are still the landing plots
+                zmin, zmax = ax_trajectories.get_zlim()
+                if ellipse_1s is not None:
+                    ax_trajectories.plot(
+                        ellipse_1s[:, 0], ellipse_1s[:, 1], zmin + 0 * ellipse_1s[:, 0], label=r"$1\sigma$",
+                        color=color, ls=linestyles[0])
+                    ax_trajectories.plot(
+                        ellipse_3s[:, 0], ellipse_3s[:, 1], zmin + 0 * ellipse_3s[:, 0], label=r"$3\sigma$",
+                        color=color, ls=linestyles[2])
+
+                # set the xspan and yspan identical, but do not make
+                # symmetrical
+                xleft, xright = ax_trajectories.get_xlim()
+                yleft, yright = ax_trajectories.get_ylim()
+                max_distance = max(xright - xleft, yright - yleft)
+                ax_trajectories.set_xlim(xleft, xleft + max_distance)
+                ax_trajectories.set_ylim(yleft, yleft + max_distance)
+                # set the xlim and ylim of the scatter plot identically
+                ax_lps.set_xlim(xleft, xleft + max_distance)
+                ax_lps.set_ylim(yleft, yleft + max_distance)
+            elif plot_coordinate_type == "wgs84":
+                # TODO plot trajectory in WGS84 instead of x,y
+                x, y, alt = nominal_trajectory
+                ax_trajectories.plot(
+                    xs=x, ys=y, zs=alt, color=color, linestyle="-",
+                    label=f"stage {stage_nr}")
+
+        ax_lps.legend()
+        ax_lps.ticklabel_format(useOffset=False, style="plain")
+
+        ax_trajectories.set_zlabel("altitude in m")
+        ax_trajectories.legend()
+
+        if plot_coordinate_type == "flat":
+            ax_trajectories.ticklabel_format(
+                useOffset=False, style="plain")
+            ax_trajectories.set_xlabel("x in m")
+            ax_trajectories.set_ylabel("y in m")
+        elif plot_coordinate_type == "wgs84":
+            ax_trajectories.ticklabel_format(
+                useOffset=False, style="plain")
+            ax_trajectories.set_xlabel("x in m")
+            ax_trajectories.set_ylabel("y in m")
+
+        # Save and show the figure
+        plt.suptitle(
+            "Dispersion Analysis of {} Stages".format(
+                general_parameters.num_stages))
+        plt.savefig(output_filename_in + "_diana_all.pdf")
+        if results_are_shown:
+            plt.show()
 
 
 # TODO: Convert docstring style
