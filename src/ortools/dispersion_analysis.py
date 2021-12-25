@@ -9,15 +9,15 @@ import matplotlib.transforms
 from matplotlib import pyplot as plt
 import click
 import configparser
-import scipy.interpolate
 import pyproj
 import cycler
 import simplekml
-
 import os
 import sys
 import csv
 import math
+import scipy.interpolate
+import scipy.stats
 import time
 import logging
 import collections
@@ -1337,12 +1337,15 @@ def print_statistics(results, general_parameters):
             f"--- Stage number {stage_nr}: {general_parameters.stage_names[stage_nr]} ---")
         print("Apogee: {:.1f}m ± {:.2f}m ".format(
             np.mean(max_altitude), np.std(max_altitude)))
-        # TODO how can one calculate the 2pi-safe statistics of the bearing
         print(
             "Rocket landing zone {:.1f}m ± {:.2f}m ".format(
-                np.mean(distances), np.std(distances))
-            + "bearing {:.1f}° ± {:.1f}° ".format(
-                np.degrees(np.mean(bearings)), np.degrees(np.std(bearings))))
+                np.mean(distances),
+                np.std(distances)) +
+            "bearing {:.1f}° ± {:.1f}° ".format(
+                np.degrees(
+                    scipy.stats.circmean(bearings)),
+                np.degrees(
+                    scipy.stats.circstd(bearings))))
         if ignitions_theta:
             print("Ignition at altitude: {:.1f}m ± {:.2f}m ".format(
                 np.mean(ignitions_altitude), np.std(ignitions_altitude)))
