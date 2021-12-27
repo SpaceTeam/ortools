@@ -22,6 +22,8 @@ import time
 import logging
 import collections
 
+from shapely.geometry import Point, Polygon
+
 
 plt.style.use("default")
 mpl.rcParams["figure.figsize"] = ((1920 - 160) / 5 / 25.4,
@@ -67,14 +69,16 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
               default="flat", show_default=True,
               help=("The type of coordinates used in the scatter plot of the "
                     "landing points."))
-@click.option("--wind", "-w", is_flag=True, default=False,
+@click.option("--wind", "-w", is_flag=True, default=False, show_default=True,
               help="Visualize the wind model.")
-@click.option("--show", "-s", is_flag=True, default=False,
+@click.option("--show", "-s", is_flag=True, default=False, show_default=True,
               help="Show the plots.")
+@click.option("--remove-outliers", "-r", is_flag=True, default=False, show_default=True,
+              help="Skip results with landing points being outside of the three-sigma region. Confidence ellipses will be re-calculated after skipping.")
 @click.option("--verbose", "-v", is_flag=True, default=False,
               help="Show detailed results on screen.")
 def diana(directory, filename, config, output,
-          plot_coordinate_type, wind, show, verbose):
+          plot_coordinate_type, wind, show, verbose, remove_outliers):
     """Do a dispersion analysis of an OpenRocket simulation.
 
     A dispersion analysis runs multiple simulations with slightly
@@ -126,7 +130,8 @@ def diana(directory, filename, config, output,
             output_filename,
             general_parameters,
             plot_coordinate_type,
-            results_are_shown)
+            results_are_shown,
+            True)
         return
 
     with orhelper.OpenRocketInstance() as instance:
@@ -194,6 +199,14 @@ def diana(directory, filename, config, output,
             results.append(result)
             parametersets.append(parameterset)
 
+        if remove_outliers:
+            # calculate if landing point is within three sigma region
+            lp_is_inside_3s = calc_lp_inside_3s(results, general_parameters)
+        else:
+            # set all true
+            lp_is_inside_3s = [[True] * len(results)
+                               for i in range(num_stages)]
+
         # the following functions rely on orhelper
         # -> run them before JVM is shut down
         t2 = time.time()
@@ -207,14 +220,20 @@ def diana(directory, filename, config, output,
             results,
             parametersets,
             general_parameters,
+            lp_is_inside_3s,
             output_filename)
         t3 = time.time()
         print("---")
         print("time for {} simulations = {:.1f}s".format(n_simulations,
                                                          t2 - t1))
         print("total execution time = {:.1f}s".format(t3 - t0))
-        create_plots(results, output_filename, general_parameters,
-                     plot_coordinate_type, results_are_shown)
+        create_plots(
+            results,
+            output_filename,
+            general_parameters,
+            lp_is_inside_3s,
+            plot_coordinate_type,
+            results_are_shown)
 
 
 def make_paths_in_config_absolute(config, config_file_path):
@@ -1466,7 +1485,7 @@ def export_results_csv(results, parametersets,
 
 
 def export_results_kml(results, parametersets,
-                       general_parameters, output_filename):
+                       general_parameters, lp_is_inside_3s, output_filename):
     """Create kml with all landing positions. """
 
     for stage_nr in range(general_parameters.num_stages):
@@ -1483,9 +1502,10 @@ def export_results_kml(results, parametersets,
             general_parameters.launch_point.getLatitudeDeg())]
 
         # add landing points
-        for rs in results:
-            r = rs[stage_nr]
-            if r and r.landing_point_world:
+        valid_results = [results[i][stage_nr] for i in range(
+            len(results)) if results[i][stage_nr] and results[i][stage_nr].landing_point_world and lp_is_inside_3s[stage_nr][i]]
+        for r in valid_results:
+            if r.landing_point_world:
                 pnt = kml.newpoint()
                 pnt.coords = [(
                     r.landing_point_world.getLongitudeDeg(),
@@ -1498,8 +1518,8 @@ def export_results_kml(results, parametersets,
                 return np.array([coordinate.getLatitudeDeg(),
                                 coordinate.getLongitudeDeg(),
                                 coordinate.getAltitude()])
-        landing_points_world = np.array([to_array_world(r[stage_nr].landing_point_world)
-                                        for r in results if r[stage_nr] and r[stage_nr].landing_point_world])
+        landing_points_world = np.array([to_array_world(r.landing_point_world)
+                                        for r in valid_results])
         x = landing_points_world[:, 1]
         y = landing_points_world[:, 0]
         if len(x) > 2:
@@ -1556,26 +1576,71 @@ def compute_distance_and_bearing_flat(from_, to):
     return distance, bearing
 
 
+def to_array_world(coordinate):
+    if coordinate:
+        return np.array([coordinate.getLatitudeDeg(),
+                        coordinate.getLongitudeDeg(),
+                        coordinate.getAltitude()])
+
+
+def to_array_cartesian(coordinate):
+    if coordinate:
+        return np.array([coordinate.x,
+                        coordinate.y,
+                        coordinate.z])
+
+
+def calc_lp_inside_3s(results, general_parameters):
+    """Iterate over results and set flag if landing point is within 3s confidence ellipse
+    the namedtuple ´results´ is immutable -> return new variable
+    """
+
+    lp_is_inside_3s = []
+    for stage_nr in range(general_parameters.num_stages):
+        landing_points_world = np.array([to_array_world(r[stage_nr].landing_point_world)
+                                        for r in results if r[stage_nr] and r[stage_nr].landing_point_world])
+        x = landing_points_world[:, 1]
+        y = landing_points_world[:, 0]
+
+        if len(x) <= 2:
+            # we need more points to calc ellipse -> set true
+            lp_is_inside_3s.append([True] * len(results))
+        else:
+            # check if points are in or out
+            poly_ellipse_3s = Polygon(calc_confidence_ellipse(x, y, n_std=3))
+            lp_is_inside_3s_stage = []
+            for r in results:
+                if r[stage_nr] and r[stage_nr].landing_point_world:
+                    landing_point_world = to_array_world(
+                        r[stage_nr].landing_point_world)
+                    px = landing_point_world[1]
+                    py = landing_point_world[0]
+                    p = Point(px, py)
+                    logging.debug(
+                        f"p {p} is within 3s: {p.within(poly_ellipse_3s)}")
+                    p_lp_is_inside_3s = p.within(poly_ellipse_3s)
+                else:
+                    p_lp_is_inside_3s = False
+                lp_is_inside_3s_stage.append(p_lp_is_inside_3s)
+            lp_is_inside_3s.append(lp_is_inside_3s_stage)
+
+    return lp_is_inside_3s
+
 # TODO: Try to refactor this ugly plotting function
-def create_plots(results, output_filename_in, general_parameters,
-                 plot_coordinate_type="flat", results_are_shown=False):
+
+
+def create_plots(
+        results,
+        output_filename_in,
+        general_parameters,
+        lp_is_inside_3s,
+        plot_coordinate_type="flat",
+        results_are_shown=False):
     """Create, store and optionally show the plots of the results.
 
     :raise ValueError:
         If Coordinate type is not "flat" or "wgs84".
     """
-    def to_array_world(coordinate):
-        if coordinate:
-            return np.array([coordinate.getLatitudeDeg(),
-                            coordinate.getLongitudeDeg(),
-                            coordinate.getAltitude()])
-
-    def to_array_cartesian(coordinate):
-        if coordinate:
-            return np.array([coordinate.x,
-                            coordinate.y,
-                            coordinate.z])
-
     nominal_trajectories = []
     ellipses_1s = []
     ellipses_3s = []
@@ -1610,30 +1675,34 @@ def create_plots(results, output_filename_in, general_parameters,
             alt = rng.normal(1000, 1, n_simulations)
             trajectories = [x, y, alt]
         else:
-            # append valid results to lists
-            landing_points_world = np.array([to_array_world(
-                r[stage_nr].landing_point_world) for r in results if r[stage_nr] and r[stage_nr].landing_point_world])
-            landing_points_cartesian = np.array([to_array_cartesian(
-                r[stage_nr].landing_point_cartesian) for r in results if r[stage_nr] and r[stage_nr].landing_point_cartesian])
             launch_point = to_array_world(general_parameters.launch_point)
             geodetic_computation = general_parameters.geodetic_computation
-            apogees = np.array([to_array_world(r[stage_nr].apogee)
-                               for r in results if r[stage_nr] and r[stage_nr].apogee])
+
+            # append valid results to lists
+            valid_results = [results[i][stage_nr] for i in range(
+                len(results)) if results[i][stage_nr] and lp_is_inside_3s[stage_nr][i]]
+
+            landing_points_world = np.array([to_array_world(
+                r.landing_point_world) for r in valid_results if r.landing_point_world])
+            landing_points_cartesian = np.array([to_array_cartesian(
+                r.landing_point_cartesian) for r in valid_results if r.landing_point_cartesian])
+            apogees = np.array([to_array_world(r.apogee)
+                               for r in valid_results if r.apogee])
             trajectories = [
-                r[stage_nr].trajectory for r in results if r[stage_nr]]
+                r.trajectory for r in valid_results]
             ignitions_theta = [
-                r[stage_nr].theta_ignition for r in results if r[stage_nr] and r[stage_nr].theta_ignition]
+                r.theta_ignition for r in valid_results if r.theta_ignition]
             ignitions_altitude = [
-                r[stage_nr].altitude_ignition for r in results if r[stage_nr] and r[stage_nr].altitude_ignition]
+                r.altitude_ignition for r in valid_results if r.altitude_ignition]
             distances = [
-                r[stage_nr].distance for r in results if r[stage_nr] and r[stage_nr].distance]
+                r.distance for r in valid_results if r.distance]
             bearings = [
-                r[stage_nr].bearing for r in results if r[stage_nr] and r[stage_nr].bearing]
+                r.bearing for r in valid_results if r.bearing]
 
         n_simulations = apogees.shape[0]
         if n_simulations < 1:
-            logging.warning("No landing points found")
-            return
+            logging.warning(f"No landing points found for stage {stage_nr}")
+            continue
 
         fig = plt.figure(constrained_layout=True)
         # TODO: Increase pad on the right
@@ -1674,6 +1743,7 @@ def create_plots(results, output_filename_in, general_parameters,
         linestyles = mpl.rcParams["axes.prop_cycle"].by_key()["linestyle"]
 
         if len(x) > 2:
+            # use matplotlib, because ellipses are rendered more smoothly
             plot_confidence_ellipse(x, y, ax_lps, n_std=1, label=r"$1\sigma$",
                                     edgecolor=colors_lps[2], ls=linestyles[0])
             plot_confidence_ellipse(x, y, ax_lps, n_std=3, label=r"$3\sigma$",
@@ -1748,8 +1818,8 @@ def create_plots(results, output_filename_in, general_parameters,
         ellipses_3s.append(ellipse_3s)
 
         # Save and show the figure
-        plt.suptitle(
-            "Dispersion Analysis of {} Simulations".format(n_simulations))
+        plt.suptitle("Dispersion Analysis of {} Simulations for {} ".format(
+            n_simulations, general_parameters.stage_names[stage_nr]))
         plt.savefig(output_filename + "_diana.pdf")
         if results_are_shown:
             plt.show()
@@ -1813,7 +1883,8 @@ def create_plots(results, output_filename_in, general_parameters,
             ax_bearings.set_ylabel("Number of Simulations")
 
         # Save and show the figure
-        plt.suptitle("Statistics of {} Simulations".format(n_simulations))
+        plt.suptitle("Statistics of {} Simulations for {}".format(
+            n_simulations, general_parameters.stage_names[stage_nr]))
         plt.savefig(output_filename + "_stats_general.pdf")
         if results_are_shown:
             plt.show()
@@ -1851,11 +1922,13 @@ def create_plots(results, output_filename_in, general_parameters,
                 ax_ignition_altitude.set_ylabel("Number of Simulations")
 
             # Save and show the figure
-            plt.suptitle("Statistics of {} Simulations".format(n_simulations))
+            plt.suptitle("Statistics of {} Simulations for {}".format(
+                n_simulations, general_parameters.stage_names[stage_nr]))
             plt.savefig(output_filename + "_stats_ignition.pdf")
             if results_are_shown:
                 plt.show()
 
+    # if it is a multistage rocket, plot nominal trajectories in a single plot
     if len(nominal_trajectories) > 1:
         fig = plt.figure(constrained_layout=True)
 
