@@ -297,6 +297,18 @@ def set_up_random_parameters(orh, sim, config):
         tilt_mean = options.getLaunchRodAngle()
     tilt_stddev = math.radians(float(config["LaunchRail"]["Tilt"]))
     thrust_factor_stddev = float(config["Propulsion"]["ThrustFactor"])
+    # truncated normal distribution for thrust factor
+    if config.has_option("Propulsion", "ThrustFactorMin"):
+        thrust_factor_min = float(config["Propulsion"]["ThrustFactorMin"])
+    else:
+        thrust_factor_min = -np.inf
+    if config.has_option("Propulsion", "ThrustFactorMax"):
+        thrust_factor_max = float(config["Propulsion"]["ThrustFactorMax"])
+    else:
+        thrust_factor_max = np.inf
+    thrust_factor_a, thrust_factor_b = (
+        thrust_factor_min - 1.) / thrust_factor_stddev, (thrust_factor_max - 1.) / thrust_factor_stddev
+
     fincant_stddev = math.radians(float(config["Aerodynamics"]["FinCant"]))
     parachute_cd_stddev = float(config["Aerodynamics"]["ParachuteCd"])
     roughness_stddev = float(config["Aerodynamics"]["Roughness"])
@@ -456,7 +468,7 @@ def set_up_random_parameters(orh, sim, config):
         RandomParameters(
             tilt=lambda: rng.normal(tilt_mean, tilt_stddev),
             azimuth=lambda: rng.normal(azimuth_mean, azimuth_stddev),
-            thrust_factor=lambda: rng.normal(1, thrust_factor_stddev),
+            thrust_factor=lambda: scipy.stats.truncnorm.rvs(thrust_factor_a, thrust_factor_b, 1., thrust_factor_stddev),
             stage_separation_delays=lambda: [rng.uniform(min,
                                                          max) for (min, max) in zip(
                 stage_separation_delays_min,
@@ -1502,8 +1514,8 @@ def export_results_kml(results, parametersets,
             general_parameters.launch_point.getLatitudeDeg())]
 
         # add landing points
-        valid_results = [results[i][stage_nr] for i in range(
-            len(results)) if results[i][stage_nr] and results[i][stage_nr].landing_point_world and lp_is_inside_3s[stage_nr][i]]
+        valid_results = [results[i][stage_nr] for i in range(len(
+            results)) if results[i][stage_nr] and results[i][stage_nr].landing_point_world and lp_is_inside_3s[stage_nr][i]]
         for r in valid_results:
             if r.landing_point_world:
                 pnt = kml.newpoint()
