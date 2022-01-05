@@ -1933,6 +1933,7 @@ def create_plots(
         plt.suptitle("Dispersion Analysis of {} Simulations for {} ".format(
             n_simulations, general_parameters.stage_names[stage_nr]))
         plt.savefig(output_filename + "_diana.pdf")
+        plt.savefig(output_filename + "_diana.png")
         if results_are_shown:
             plt.show()
 
@@ -1998,6 +1999,7 @@ def create_plots(
         plt.suptitle("Statistics of {} Simulations for {}".format(
             n_simulations, general_parameters.stage_names[stage_nr]))
         plt.savefig(output_filename + "_stats_general.pdf")
+        plt.savefig(output_filename + "_stats_general.png")
         if results_are_shown:
             plt.show()
 
@@ -2037,6 +2039,7 @@ def create_plots(
             plt.suptitle("Statistics of {} Simulations for {}".format(
                 n_simulations, general_parameters.stage_names[stage_nr]))
             plt.savefig(output_filename + "_stats_ignition.pdf")
+            plt.savefig(output_filename + "_stats_ignition.png")
             if results_are_shown:
                 plt.show()
 
@@ -2144,6 +2147,7 @@ def create_plots(
             "Dispersion Analysis of {} Stages".format(
                 general_parameters.num_stages))
         plt.savefig(output_filename_in + "_diana_all.pdf")
+        plt.savefig(output_filename_in + "_diana_all.png")
         if results_are_shown:
             plt.show()
 
