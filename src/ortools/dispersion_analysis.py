@@ -18,12 +18,12 @@ import csv
 import math
 import scipy.interpolate
 import scipy.stats
+from scipy.spatial.transform import Rotation as R
 import time
 import logging
 import collections
 
 from shapely.geometry import Point, Polygon
-
 
 plt.style.use("default")
 mpl.rcParams["figure.figsize"] = ((1920 - 160) / 5 / 25.4,
@@ -293,6 +293,7 @@ def set_up_random_parameters(orh, sim, config):
     azimuth_intowind = options.getLaunchIntoWind()
     azimuth_mean = options.getLaunchRodDirection()
 
+    guidance_stddev = math.radians(float(config["LaunchRail"]["Guidance"]))
     azimuth_stddev = math.radians(float(config["LaunchRail"]["Azimuth"]))
     if config.has_option("LaunchRail", "TiltMean"):
         # override OR settings
@@ -462,7 +463,8 @@ def set_up_random_parameters(orh, sim, config):
         "mass_factor",
         "Caxial_factor",
         "CN_factor",
-        "Cside_factor"])
+        "Cside_factor",
+        "guidance"])
     return (
         RocketComponents(
             fin_sets=components_fin_sets,
@@ -493,7 +495,8 @@ def set_up_random_parameters(orh, sim, config):
             mass_factor=lambda: rng.normal(1, mass_factor_stddev),
             Caxial_factor=lambda: rng.normal(1, Caxial_factor_stddev),
             CN_factor=lambda: rng.normal(1, CN_factor_stddev),
-            Cside_factor=lambda: rng.normal(1, Cside_factor_stddev)))
+            Cside_factor=lambda: rng.normal(1, Cside_factor_stddev),
+            guidance=lambda: rng.normal(0, guidance_stddev)))
 
 
 def randomize_simulation(open_rocket_helper, sim, rocket_components,
@@ -502,10 +505,37 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     return the global parameter set"""
     logging.info("Randomize variables...")
     options = sim.getOptions()
-    options.setLaunchRodAngle(random_parameters.tilt())
+
+    # --- calculate launch rod angles
+    tilt = random_parameters.tilt()
+    azimuth = random_parameters.azimuth()
+    dx = random_parameters.guidance()
+    dy = random_parameters.guidance()
+
+    # calculate direction of launch rod in xyz space, with lenght=1
+    v = [0, 0, 1]
+    Rx = R.from_euler('x', -tilt)
+    Rz = R.from_euler('z', -azimuth)
+    pts = Rz.apply(Rx.apply(v))
+    # superimpose pointing direction (azimuth+tilt) with improper guidance
+    # within rail
+    Rx = R.from_euler('x', dx)
+    Ry = R.from_euler('y', dy)
+    pts_plane = Ry.apply(Rx.apply(pts))
+    # calc tilt and azimuth again
+    tilt_result = np.arctan2(
+        np.sqrt(
+            pts_plane[0] *
+            pts_plane[0] +
+            pts_plane[1] *
+            pts_plane[1]),
+        pts_plane[2])
+    azimuth_result = np.arctan2(pts_plane[0], pts_plane[1])
+
+    options.setLaunchRodAngle(tilt_result)
     # Otherwise launch rod direction cannot be altered
     options.setLaunchIntoWind(False)
-    options.setLaunchRodDirection(random_parameters.azimuth())
+    options.setLaunchRodDirection(azimuth_result)
 
     mcid = options.getMotorConfigurationID()
     rocket = options.getRocket()
