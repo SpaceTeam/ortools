@@ -1923,15 +1923,24 @@ def create_plots(
 
             ax_trajectories.ticklabel_format(useOffset=False, style="plain")
             # set the xspan and yspan identical
-            # TODO make it symmetrical
             xleft, xright = ax_trajectories.get_xlim()
             yleft, yright = ax_trajectories.get_ylim()
+            xmid = (xleft + xright) / 2
+            ymid = (yleft + yright) / 2
             max_distance = max(xright - xleft, yright - yleft)
-            ax_trajectories.set_xlim(xleft, xleft + max_distance)
-            ax_trajectories.set_ylim(yleft, yleft + max_distance)
+            ax_trajectories.set_xlim(
+                xmid - max_distance / 2,
+                xmid + max_distance / 2)
+            ax_trajectories.set_ylim(
+                ymid - max_distance / 2,
+                ymid + max_distance / 2)
             # set the xlim and ylim of the scatter plot identically
-            ax_lps.set_xlim(xleft, xleft + max_distance)
-            ax_lps.set_ylim(yleft, yleft + max_distance)
+            ax_lps.set_xlim(
+                xmid - max_distance / 2,
+                xmid + max_distance / 2)
+            ax_lps.set_ylim(
+                ymid - max_distance / 2,
+                ymid + max_distance / 2)
 
             ax_trajectories.set_xlabel("x in m")
             ax_trajectories.set_ylabel("y in m")
@@ -2138,16 +2147,21 @@ def create_plots(
                         ellipse_3s[:, 0], ellipse_3s[:, 1], zmin + 0 * ellipse_3s[:, 0], label=r"$3\sigma$",
                         color=color, ls=linestyles[2])
 
-                # set the xspan and yspan identical, but do not make
-                # symmetrical
+                # set the xspan and yspan identical
                 xleft, xright = ax_trajectories.get_xlim()
                 yleft, yright = ax_trajectories.get_ylim()
+                xmid = (xleft + xright) / 2
+                ymid = (yleft + yright) / 2
                 max_distance = max(xright - xleft, yright - yleft)
-                ax_trajectories.set_xlim(xleft, xleft + max_distance)
-                ax_trajectories.set_ylim(yleft, yleft + max_distance)
+                ax_trajectories.set_xlim(
+                    xmid - max_distance / 2, xmid + max_distance / 2)
+                ax_trajectories.set_ylim(
+                    ymid - max_distance / 2, ymid + max_distance / 2)
                 # set the xlim and ylim of the scatter plot identically
-                ax_lps.set_xlim(xleft, xleft + max_distance)
-                ax_lps.set_ylim(yleft, yleft + max_distance)
+                ax_lps.set_xlim(
+                    xmid - max_distance / 2, xmid + max_distance / 2)
+                ax_lps.set_ylim(
+                    ymid - max_distance / 2, ymid + max_distance / 2)
             elif plot_coordinate_type == "wgs84":
                 # TODO plot trajectory in WGS84 instead of x,y
                 x, y, alt = nominal_trajectory
