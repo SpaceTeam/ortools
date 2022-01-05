@@ -194,7 +194,12 @@ def diana(directory, filename, config, output,
                     orh, sim, rocket_components, random_parameters, False)
 
             result = run_simulation(
-                orh, sim, config, parameterset, general_parameters)
+                orh,
+                sim,
+                config,
+                parameterset,
+                general_parameters,
+                f"{output_filename}_thrust_increase_{i}.csv")
 
             results.append(result)
             parametersets.append(parameterset)
@@ -678,7 +683,13 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
         Cside_factor=Cside_factor)
 
 
-def run_simulation(orh, sim, config, parameterset, general_parameters):
+def run_simulation(
+        orh,
+        sim,
+        config,
+        parameterset,
+        general_parameters,
+        fname_motor):
     """Run a single simulation and return the results.
 
     :return:
@@ -691,7 +702,8 @@ def run_simulation(orh, sim, config, parameterset, general_parameters):
         parameterset.Caxial_factor, parameterset.CN_factor, parameterset.Cside_factor)
     motor_listener = MotorListener(
         parameterset.thrust_factor,
-        float(config["Propulsion"]["NozzleCrossSection"]))
+        float(config["Propulsion"]["NozzleCrossSection"]),
+        fname_motor)
 
     if (config.has_section("WindModel")
         and config.has_option(
@@ -807,12 +819,52 @@ def run_simulation(orh, sim, config, parameterset, general_parameters):
 class MotorListener(orhelper.AbstractSimulationListener):
     """Override the thrust of the motor."""
 
-    def __init__(self, thrust_factor, nozzle_cross_section_mm2):
+    def __init__(self, thrust_factor, nozzle_cross_section_mm2, fname):
         self.thrust_factor = thrust_factor
         self.nozzle_cross_section = nozzle_cross_section_mm2 * 1e-6
         logging.info("Nozzle cross section = {:6.2g}mm^2".format(
             nozzle_cross_section_mm2))
         self.pressure = STANDARD_PRESSURE
+        self.fname = fname
+
+        self.thrust = []
+        self.pressures = []
+        self.thrust_new = []
+        self.thrust_increase = []
+
+    def __del__(self):
+        # create data file for thrust values if this feature is active
+        if self.nozzle_cross_section > 0.:
+            try:
+                with open(self.fname, 'w', newline='') as csvfile:
+                    resultwriter = csv.writer(csvfile, delimiter=',')
+                    resultwriter.writerow([" STANDARD_PRESSURE / Pa",
+                                           " pressure / Pa",
+                                           " thrust_factor / 1",
+                                           " thrust orig / N",
+                                           " thrust new / N",
+                                           " thrust increase / N",
+                                           " thrust increase / %"])
+
+                    for thrust, pressure, thrust_new, thrust_increase in zip(
+                            self.thrust, self.pressures, self.thrust_new, self.thrust_increase):
+                        if thrust > 0:
+                            thrust_incr_percent = (
+                                thrust_increase) / thrust * 100
+                        else:
+                            thrust_incr_percent = 0
+
+                        resultwriter.writerow([
+                            "%.2f" % STANDARD_PRESSURE,
+                            "%.2f" % pressure,
+                            "%.2f" % self.thrust_factor,
+                            "%.2f" % thrust,
+                            "%.2f" % thrust_new,
+                            "%.2f" % thrust_increase,
+                            "%.2f" % thrust_incr_percent])
+
+            except BaseException:
+                logging.warning('Could not write thrust file')
 
     def postAtmosphericModel(self, status, atmospheric_conditions):
         """Get the ambient pressure from the atmospheric model."""
@@ -820,15 +872,28 @@ class MotorListener(orhelper.AbstractSimulationListener):
 
     def postSimpleThrustCalculation(self, status, thrust):
         """Return the adapted thrust."""
-        # add thrust_increse if motor is burning and apply factor
+
         thrust_increase = (
             STANDARD_PRESSURE - self.pressure) * self.nozzle_cross_section
         if thrust >= thrust_increase:
+            # apply thrust_increase if motor is burning
             logging.debug("Thrust increase due to decreased ambient pressure "
                           + "= {:6.2f}N".format(thrust_increase))
-            return self.thrust_factor * thrust + thrust_increase
         else:
-            return self.thrust_factor * thrust
+            # no increase after motor burnout
+            thrust_increase = 0
+
+        # add thrust increase (if there is any) and apply thrust variation
+        # factor
+        thrust_new = self.thrust_factor * thrust + thrust_increase
+
+        # save for thrust file
+        self.thrust.append(thrust)
+        self.thrust_new.append(thrust_new)
+        self.thrust_increase.append(thrust_increase)
+        self.pressures.append(self.pressure)
+
+        return thrust_new
 
 
 class MassCalculationListener(orhelper.AbstractSimulationListener):
