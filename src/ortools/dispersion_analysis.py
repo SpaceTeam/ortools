@@ -1156,21 +1156,42 @@ class WindListener(orhelper.AbstractSimulationListener):
                 "Warning: wind model file '{}' ".format(wind_model_file) +
                 "not found! Default wind model will be used.")
             return
+        except (ValueError):
+            self._default_wind_model_is_used = True
+            logging.warning(
+                "Aloft data is incorrect! `altitudes_m`, "
+                + "`wind_direction_std_degree`, "
+                + "`wind_directions_degree` and `wind_speeds_mps` must be "
+                + "of the same length.")
+            return
 
-        self._default_wind_model_is_used = False
-        altitudes_m = data[:, 0]
-        wind_directions_degree = data[:, 1]
-        wind_directions_rad = np.radians(wind_directions_degree)
-        wind_speeds_mps = data[:, 2]
-        wind_speeds_north_mps = wind_speeds_mps * np.cos(wind_directions_rad)
-        wind_speeds_east_mps = wind_speeds_mps * np.sin(wind_directions_rad)
+        try:
+            # Convert data
+            altitudes_m = data[:, 0]
+            wind_directions_degree = data[:, 1]
+            wind_speeds_mps = data[:, 2]
+            wind_direction_std_degree = data[:, 3]
+        except BaseException:
+            self._default_wind_model_is_used = True
+            logging.warning(
+                "Warning: wind model file '{}' ".format(wind_model_file) +
+                "is malformated.")
+            return
 
+        # npyio catches this, but just to be sure
         if (len(altitudes_m) != len(wind_directions_degree)
-                or len(altitudes_m) != len(wind_speeds_mps)):
-            raise ValueError(
+                or len(altitudes_m) != len(wind_speeds_mps)
+                or len(altitudes_m) != len(wind_direction_std_degree)):
+            self._default_wind_model_is_used = True
+            logging.warning(
                 "Aloft data is incorrect! `altitudes_m`, "
                 + "`wind_directions_degree` and `wind_speeds_mps` must be "
                 + "of the same length.")
+            return
+
+        self._default_wind_model_is_used = False
+        wind_directions_rad = np.radians(wind_directions_degree)
+        wind_direction_std_rad = np.radians(wind_direction_std_degree)
 
         logging.debug("Input wind levels model data:")
         logging.debug("Altitude (m) ")
@@ -1179,6 +1200,20 @@ class WindListener(orhelper.AbstractSimulationListener):
         logging.debug(wind_directions_degree)
         logging.debug("Wind speed (m/s) ")
         logging.debug(wind_speeds_mps)
+        logging.debug("direction std deviation (°) ")
+        logging.debug(wind_direction_std_degree)
+
+        # randomize direction. wind speed is "randomized" by turbulence model
+        # of OR
+        rng = np.random.default_rng()
+        wind_directions_randomized_rad = [
+            rng.normal(
+                direction, direction_std) for direction, direction_std in zip(
+                wind_directions_rad, wind_direction_std_rad)]
+        wind_speeds_north_mps = wind_speeds_mps * \
+            np.cos(wind_directions_randomized_rad)
+        wind_speeds_east_mps = wind_speeds_mps * \
+            np.sin(wind_directions_randomized_rad)
 
         # assume that the intermediate values of a rotation of the wind by 180° is zero
         # instead of the same magnitude and 90° rotaion ->
