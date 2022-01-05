@@ -25,6 +25,9 @@ import collections
 
 from shapely.geometry import Point, Polygon
 
+DIANA_RELEASE = "1.2.0"
+
+# -- plot options
 plt.style.use("default")
 mpl.rcParams["figure.figsize"] = ((1920 - 160) / 5 / 25.4,
                                   (1080 - 90) / 5 / 25.4)
@@ -38,15 +41,18 @@ mpl.rcParams["axes.prop_cycle"] = cycler.cycler(
 line_color_map = mpl.cm.gist_rainbow
 line_color_map_jet = mpl.cm.jet
 
+# -- global settings
+STANDARD_PRESSURE = 101325.0  # The standard air pressure (1.01325 bar)
+METERS_PER_DEGREE_LATITUDE = 111325.0
+METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050.0
+# wind model interpolation, can be ´linear´, ´spline´, ´pchip´
+WIND_MODEL_INTERPOLATION = "linear"
+
+# debug options
 PLOTS_ARE_TESTED = False
 WINDMODEL_TEST = False
 EXCEPTION_FOR_MISSING_EVENTS = False
 
-STANDARD_PRESSURE = 101325.0  # The standard air pressure (1.01325 bar)
-METERS_PER_DEGREE_LATITUDE = 111325.0
-METERS_PER_DEGREE_LONGITUDE_EQUATOR = 111050.0
-# can be ´linear´, ´spline´, ´pchip´
-WIND_MODEL_INTERPOLATION = "linear"
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -101,6 +107,7 @@ def diana(directory, filename, config, output,
     output_filename = output or "dispersion_analysis_" + timestamp
     results_are_shown = show
     ork_file_path = config["General"]["OrkFile"]
+    print(f"This is diana v{DIANA_RELEASE}")
     print("directory   : {}".format(directory))
     print(".ork file   : {}".format(ork_file_path))
     print("config file : {}".format(config_file_path))
@@ -189,7 +196,8 @@ def diana(directory, filename, config, output,
                 parameterset = get_simulation_parameters(
                     orh, sim, rocket_components, random_parameters, True)
             else:
-                print("with nominal parameter set but wind-model applied")
+                print(
+                    "with nominal parameters. if set, wind-model and pressure-increased thrust is applied")
                 parameterset = get_simulation_parameters(
                     orh, sim, rocket_components, random_parameters, False)
 
