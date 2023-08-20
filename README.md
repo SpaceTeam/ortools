@@ -82,6 +82,6 @@ to get help and usage information. For further information, check the [Wiki](htt
 - For any other contributions, see the [CONTRIBUTING instructions](CONTRIBUTING.md)
 
 ## Credits
-- [SilentSys](https://github.com/SilentSys) for [https://github.com/SilentSys/orhelper](orhelper)
+- [SilentSys](https://github.com/SilentSys) for [orhelper](https://github.com/SilentSys/orhelper)
 - The community behind [OpenRocket](https://github.com/openrocket/openrocket)
 - RocketSam2016 with his idea of the [multilevel wind model](https://www.rocketryforum.com/threads/new-openrocket-plugin-to-allow-different-wind-speed-direction-at-different-altitudes.140619/)
