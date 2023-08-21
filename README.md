@@ -7,7 +7,26 @@ As an example result, see the image from a landing scatter visualization produce
 ![Sample image for landing scatter visualization by diana](https://github.com/SpaceTeam/ortools/blob/master/docs/landing_scatter_sample.jpg)
 
 
-## Prerequisites
+## Installation
+
+### Using docker
+Install docker. Build a docker container using the provided dockerfile
+```bash
+docker build . -t ortools -f Dockerfile
+```
+Run a shipped example with 
+Install docker. Build a docker container using the provided dockerfile
+```bash
+docker run -it ortools
+```
+and examine the console output.
+
+To run a command with your data from the current folder, mount PWD into the docker container, and pass it as working and output directory to diana
+```bash
+docker run -v $PWD:/ortools/data -it ortools diana -d data -o data/dockertest
+```
+
+### Locally
 You should use Java 8 (a really, really old version) for this to work, see [orhelper](https://pypi.org/project/orhelper/). However, it may run with a newer java version even if the GUI of OpenRocket does not start.
 Additionally, install [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) for compiling `jpype1`.
 
@@ -17,8 +36,6 @@ Tested with the following version combinations:
 * Python 3.8.5, openjdk 11.0.11, Ubuntu 20.04
 
 An installation on Mac OS was not successful so far. If you have figured that out, please let us know!
-
-## Installation
 
 1. Download or clone the project.
 2. Create and activate some conda or pip environment with Python 3. E.g.:
