@@ -793,7 +793,7 @@ def run_simulation(
 
     if branch_ct == num_stages:
         for branch_nr in range(branch_ct):
-            # was there any exception thrown? -> skip results fo this stage
+            # was there any exception thrown? -> skip results for this stage
             events = sim.getSimulatedData().getBranch(branch_nr).getEvents()
             for ev in events:
                 # how do I get the source of the exception?
