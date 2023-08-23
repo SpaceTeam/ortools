@@ -25,7 +25,7 @@ import collections
 
 from shapely.geometry import Point, Polygon
 
-DIANA_RELEASE = "1.2.0"
+DIANA_RELEASE = "1.3.0"
 
 # -- plot options
 plt.style.use("default")
@@ -163,7 +163,7 @@ def diana(directory, filename, config, output,
             options.getLaunchAltitude())
         logging.info("Launch Point {} found.".format(launch_point))
 
-        rocket = options.getRocket()
+        rocket = sim.getRocket()
         num_stages = rocket.getChildCount()
         print("Rocket has {} stage(s):".format(num_stages))
         stage_names = [r.getName() for r in rocket.getChildren()]
@@ -331,8 +331,8 @@ def set_up_random_parameters(orh, sim, config):
     Cside_factor_stddev = float(config["Aerodynamics"]["CsideFactor"])
     CN_factor_stddev = float(config["Aerodynamics"]["CNFactor"])
 
-    mcid = options.getMotorConfigurationID()
-    rocket = options.getRocket()
+    rocket = sim.getRocket()
+    mcid = sim.getFlightConfigurationId()
     num_stages = rocket.getChildCount()
     stages = []
     stage_separation_delays_max = []
@@ -357,7 +357,7 @@ def set_up_random_parameters(orh, sim, config):
             stage_separation_delays_min.append(separationDelay)
 
     # MassCalculation
-    refLen = rocket.getReferenceType().getReferenceLength(sim.getConfiguration())
+    refLen = rocket.getReferenceType().getReferenceLength(sim.getActiveConfiguration())
     if (config.has_section("MassCalculation")):
         if(config.has_option(
                 "MassCalculation", "CG")):
@@ -545,10 +545,10 @@ def randomize_simulation(open_rocket_helper, sim, rocket_components,
     options.setLaunchIntoWind(False)
     options.setLaunchRodDirection(azimuth_result)
 
-    mcid = options.getMotorConfigurationID()
-    rocket = options.getRocket()
+    mcid = options.getFlightConfigurationId()
+    rocket = sim.getRocket()
     num_stages = rocket.getChildCount()
-    # set stage sepration
+    # set stage separation
     for (
             stage,
             stage_separation_delay) in zip(
@@ -663,8 +663,8 @@ def get_simulation_parameters(open_rocket_helper, sim, rocket_components,
     logging.info("CN factor = {:6.2f}".format(CN_factor))
     logging.info("Cside factor = {:6.2f}".format(Cside_factor))
 
-    mcid = options.getMotorConfigurationID()
-    rocket = options.getRocket()
+    mcid = options.getFlightConfigurationId()
+    rocket = sim.getRocket()
 
     # stage sepration
     separationDelays = []

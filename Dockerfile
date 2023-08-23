@@ -12,7 +12,8 @@ RUN apt-get update \
 # install prerequesites for ortools
 RUN apt-get update && \
     apt-get -y install --no-install-recommends \
-    openjdk-8-jre \
+    openjdk-11-jre \
+    git \
     && \
     : "remove cache" && \
     apt-get autoremove -y -qq && \
@@ -22,11 +23,17 @@ RUN apt-get update && \
 COPY . /ortools
 WORKDIR /ortools
 
+# install orhelper fork
+RUN mkdir /projects && cd /projects && \
+    git clone https://github.com/SpaceTeam/orhelper.git && \
+    cd orhelper && \
+    pip install -e .
+
 # install ortools
 RUN pip install -e .
 
 # get OR
-RUN wget https://github.com/openrocket/openrocket/releases/download/release-15.03/OpenRocket-15.03.jar
+RUN wget https://github.com/openrocket/openrocket/releases/download/release-22.02/OpenRocket-22.02.jar
 
 # default command
 CMD diana -c examples/dispersion_analysis.ini
